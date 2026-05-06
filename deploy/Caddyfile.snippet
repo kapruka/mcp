@@ -1,0 +1,35 @@
+# Append this block to /etc/caddy/Caddyfile and run `sudo systemctl reload caddy`.
+# DNS for mcp.kapruka.com points at Cloudflare (CF Business proxy enabled).
+# CF terminates TLS at edge and re-encrypts to origin (Full strict).
+# CF sends the real client IP in the CF-Connecting-IP header — we use that
+# for X-Real-IP so the per-IP rate limiter sees real clients, not CF edges.
+
+mcp.kapruka.com {
+	encode zstd gzip
+
+	handle /robots.txt {
+		respond "User-agent: *\nDisallow:\n" 200
+	}
+
+	# Reverse-proxy everything else to the Python MCP server.
+	# Streamable-HTTP MCP needs request streaming and long-lived connections.
+	reverse_proxy 127.0.0.1:3200 {
+		# Real client IP comes from Cloudflare; fall back to remote_host if absent.
+		header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+		header_up X-Forwarded-Proto https
+		# Don't buffer SSE; allow long timeouts for MCP streams.
+		flush_interval -1
+		transport http {
+			read_timeout 5m
+			write_timeout 5m
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+	}
+}

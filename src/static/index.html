@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kapruka MCP — connect any LLM to Sri Lanka's largest e-commerce catalog</title>
+<meta name="description" content="Free public MCP server for Kapruka.com. Connect Claude, ChatGPT, Cursor and any MCP-aware client to search products, browse categories, and look up product details." />
+
+<!-- Open Graph -->
+<meta property="og:title" content="Kapruka MCP Server" />
+<meta property="og:description" content="Connect any LLM to Sri Lanka's largest e-commerce catalog. Free public tier, no auth required." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://mcp.kapruka.com/" />
+<meta property="og:image" content="https://www.kapruka.com/static/image/logo.jpg?v2" />
+
+<link rel="icon" href="https://www.kapruka.com/favicon.ico" />
+
+<style>
+  :root {
+    --brand:        #402970;
+    --brand-deep:   #2d1d50;
+    --brand-soft:   #f7f5fa;
+    --accent:       #f8da08;
+    --ink:          #1c1c1c;
+    --ink-soft:     #5f5f5f;
+    --line:         #e3e1ea;
+    --code-bg:      #1d1530;
+    --code-ink:     #e9e4f5;
+    --ok:           #1a8a3d;
+    --radius:       12px;
+    --shadow:       0 1px 2px rgba(64, 41, 112, 0.06), 0 6px 24px rgba(64, 41, 112, 0.08);
+    --mono:         ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans:         -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: linear-gradient(180deg, var(--brand-soft) 0%, #ffffff 480px);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--brand); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .container { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Header ─────────────────────────────────────────────────────────── */
+  header {
+    padding: 28px 0 16px;
+  }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 12px;
+    color: var(--brand); font-weight: 700; font-size: 18px; letter-spacing: -0.01em;
+  }
+  .brand img { height: 36px; width: auto; display: block; border-radius: 6px; }
+  .brand .sep { width: 1px; height: 22px; background: var(--line); }
+  .brand .product { font-weight: 600; color: var(--ink); }
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: #e7f6ec; color: var(--ok);
+    border-radius: 999px; font-size: 13px; font-weight: 600;
+  }
+  .status .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 0 0 rgba(26, 138, 61, 0.5);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0   rgba(26, 138, 61, 0.5); }
+    70%  { box-shadow: 0 0 0 10px rgba(26, 138, 61, 0); }
+    100% { box-shadow: 0 0 0 0   rgba(26, 138, 61, 0); }
+  }
+
+  /* ── Hero ───────────────────────────────────────────────────────────── */
+  .hero { padding: 48px 0 36px; }
+  .hero h1 {
+    font-size: clamp(32px, 5vw, 48px);
+    line-height: 1.1; letter-spacing: -0.025em;
+    margin: 0 0 16px;
+    color: var(--brand-deep);
+  }
+  .hero .lede {
+    font-size: 19px; color: var(--ink-soft);
+    max-width: 640px; margin: 0;
+  }
+  .hero .lede strong { color: var(--ink); font-weight: 600; }
+
+  /* ── Endpoint card ──────────────────────────────────────────────────── */
+  .endpoint {
+    margin: 32px 0 16px;
+    padding: 22px 24px;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .endpoint-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+    color: var(--brand); text-transform: uppercase; margin-bottom: 10px;
+  }
+  .endpoint-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .endpoint-url {
+    font-family: var(--mono); font-size: 17px; color: var(--ink);
+    font-weight: 600; word-break: break-all; flex: 1;
+  }
+  .copy-btn {
+    appearance: none; border: 1px solid var(--line); background: white;
+    color: var(--brand); font-weight: 600; font-size: 13px;
+    padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    font-family: var(--sans);
+    transition: all 0.15s;
+  }
+  .copy-btn:hover { background: var(--brand); color: white; border-color: var(--brand); }
+  .copy-btn.copied { background: var(--ok); color: white; border-color: var(--ok); }
+  .endpoint-meta {
+    margin-top: 14px;
+    display: flex; gap: 18px; flex-wrap: wrap;
+    font-size: 13px; color: var(--ink-soft);
+  }
+  .endpoint-meta span::before {
+    content: "•"; margin-right: 8px; color: var(--accent); font-weight: 700;
+  }
+
+  /* ── Section headings ───────────────────────────────────────────────── */
+  section { padding: 36px 0; }
+  section h2 {
+    font-size: 22px; letter-spacing: -0.01em; color: var(--brand-deep);
+    margin: 0 0 18px;
+  }
+  section .section-lede { color: var(--ink-soft); margin: 0 0 22px; max-width: 640px; }
+
+  /* ── Tabs (Quick start) ─────────────────────────────────────────────── */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .tab {
+    appearance: none; border: 0; background: transparent;
+    padding: 10px 16px; cursor: pointer;
+    font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--ink-soft);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color 0.15s;
+  }
+  .tab:hover { color: var(--brand); }
+  .tab[aria-selected="true"] { color: var(--brand); border-bottom-color: var(--brand); }
+  .panel { display: none; }
+  .panel[data-active] { display: block; }
+
+  /* ── Code blocks ────────────────────────────────────────────────────── */
+  .code-wrap {
+    position: relative;
+    margin: 16px 0 0;
+  }
+  pre {
+    margin: 0;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: var(--mono); font-size: 13.5px; line-height: 1.55;
+  }
+  pre code { color: inherit; }
+  .code-wrap .copy-btn {
+    position: absolute; top: 10px; right: 10px;
+    background: rgba(255,255,255,0.06); color: var(--code-ink);
+    border-color: rgba(255,255,255,0.12);
+  }
+  .code-wrap .copy-btn:hover {
+    background: var(--accent); color: var(--brand-deep); border-color: var(--accent);
+  }
+  .code-note {
+    font-size: 13px; color: var(--ink-soft); margin: 10px 0 0;
+  }
+  .code-note code {
+    background: var(--brand-soft); padding: 2px 6px; border-radius: 4px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--brand-deep);
+  }
+
+  /* ── Tools grid ─────────────────────────────────────────────────────── */
+  .tools {
+    display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+  .tool {
+    padding: 20px;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    transition: all 0.15s;
+  }
+  .tool:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-color: rgba(64,41,112,0.2); }
+  .tool .icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: var(--brand-soft);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 18px; margin-bottom: 12px;
+  }
+  .tool h3 {
+    font-family: var(--mono); font-size: 14px; font-weight: 600;
+    color: var(--brand); margin: 0 0 8px; word-break: break-word;
+  }
+  .tool p {
+    font-size: 14px; color: var(--ink-soft); margin: 0 0 12px;
+  }
+  .tool .params {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .tool .params code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--brand-soft); color: var(--brand-deep);
+    padding: 2px 7px; border-radius: 999px;
+  }
+
+  /* ── Limits / footer ────────────────────────────────────────────────── */
+  .limits {
+    background: white; border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 22px 24px;
+  }
+  .limits ul { margin: 0; padding-left: 20px; }
+  .limits li { margin: 6px 0; color: var(--ink-soft); }
+  .limits li strong { color: var(--ink); }
+
+  footer {
+    margin-top: 24px; padding: 32px 0;
+    border-top: 1px solid var(--line);
+    color: var(--ink-soft); font-size: 13px;
+  }
+  footer .row {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    align-items: center; justify-content: space-between;
+  }
+  footer a { color: var(--brand); }
+
+  /* ── Mobile tweaks ──────────────────────────────────────────────────── */
+  @media (max-width: 560px) {
+    .hero { padding: 32px 0 24px; }
+    .endpoint-url { font-size: 14px; }
+    section { padding: 28px 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <header>
+    <div class="topbar">
+      <a class="brand" href="https://www.kapruka.com" target="_blank" rel="noopener">
+        <img src="https://www.kapruka.com/static/image/logo.jpg?v2" alt="Kapruka" />
+        <span class="sep"></span>
+        <span class="product">MCP Server</span>
+      </a>
+      <span class="status" title="Live and serving requests">
+        <span class="dot"></span> Live
+      </span>
+    </div>
+  </header>
+
+  <section class="hero">
+    <h1>Plug any LLM into Sri Lanka's<br/>largest local e-commerce enterprise.</h1>
+    <p class="lede">
+      A <strong>free public MCP server</strong> for <a href="https://www.kapruka.com" target="_blank" rel="noopener">Kapruka.com</a>.
+      Search products, browse categories, and look up product details from
+      Claude, ChatGPT, Cursor — or any MCP-aware client.
+    </p>
+
+    <div class="endpoint">
+      <div class="endpoint-label">MCP endpoint</div>
+      <div class="endpoint-row">
+        <code class="endpoint-url" id="endpoint-url">https://mcp.kapruka.com/mcp</code>
+        <button class="copy-btn" data-copy="#endpoint-url">Copy</button>
+      </div>
+      <div class="endpoint-meta">
+        <span>Streamable HTTP transport</span>
+        <span>No auth required</span>
+        <span>60 requests / min per IP</span>
+        <span>Read-only</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Quick start</h2>
+    <p class="section-lede">Drop one snippet into your client, restart, done.</p>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-tab="claude">Claude Desktop</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="cursor">Cursor</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="chatgpt">ChatGPT</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="inspector">MCP Inspector</button>
+    </div>
+
+    <!-- Claude Desktop -->
+    <div class="panel" data-tab-panel="claude" data-active>
+      <div class="code-wrap">
+        <button class="copy-btn" data-copy="#code-claude">Copy</button>
+<pre><code id="code-claude">{
+  "mcpServers": {
+    "kapruka": {
+      "url": "https://mcp.kapruka.com/mcp"
+    }
+  }
+}</code></pre>
+      </div>
+      <p class="code-note">
+        Save to <code>%APPDATA%\Claude\claude_desktop_config.json</code> on Windows
+        or <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> on macOS, then restart Claude Desktop.
+      </p>
+    </div>
+
+    <!-- Cursor -->
+    <div class="panel" data-tab-panel="cursor">
+      <div class="code-wrap">
+        <button class="copy-btn" data-copy="#code-cursor">Copy</button>
+<pre><code id="code-cursor">{
+  "mcpServers": {
+    "kapruka": {
+      "url": "https://mcp.kapruka.com/mcp"
+    }
+  }
+}</code></pre>
+      </div>
+      <p class="code-note">
+        Settings → MCP → Add new server, or paste into <code>~/.cursor/mcp.json</code>.
+      </p>
+    </div>
+
+    <!-- ChatGPT -->
+    <div class="panel" data-tab-panel="chatgpt">
+      <div class="code-wrap">
+        <button class="copy-btn" data-copy="#code-chatgpt">Copy</button>
+<pre><code id="code-chatgpt">Server URL:  https://mcp.kapruka.com/mcp
+Transport:   Streamable HTTP
+Auth:        None</code></pre>
+      </div>
+      <p class="code-note">
+        In ChatGPT, open <strong>Settings → Connectors → Add MCP server</strong> and paste the URL.
+      </p>
+    </div>
+
+    <!-- MCP Inspector -->
+    <div class="panel" data-tab-panel="inspector">
+      <div class="code-wrap">
+        <button class="copy-btn" data-copy="#code-inspector">Copy</button>
+<pre><code id="code-inspector">npx @modelcontextprotocol/inspector</code></pre>
+      </div>
+      <p class="code-note">
+        In the Inspector UI: choose <strong>Streamable HTTP</strong>, paste
+        <code>https://mcp.kapruka.com/mcp</code>, click <strong>Connect</strong>.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Available tools</h2>
+    <p class="section-lede">Five read-only tools for product discovery and delivery quoting — all return structured results in markdown or JSON.</p>
+
+    <div class="tools">
+      <div class="tool">
+        <div class="icon">🔍</div>
+        <h3>kapruka_search_products</h3>
+        <p>Search the catalog by keyword with category, price range, stock, and sort filters. Pagination capped at 3 pages.</p>
+        <div class="params">
+          <code>q</code><code>category</code><code>min_price</code><code>max_price</code><code>in_stock_only</code><code>sort</code><code>limit</code><code>cursor</code><code>currency</code>
+        </div>
+      </div>
+
+      <div class="tool">
+        <div class="icon">📦</div>
+        <h3>kapruka_get_product</h3>
+        <p>Full details for any product by ID — name, price, stock, variants, images, shipping, and a direct URL.</p>
+        <div class="params">
+          <code>product_id</code><code>currency</code>
+        </div>
+      </div>
+
+      <div class="tool">
+        <div class="icon">🗂️</div>
+        <h3>kapruka_list_categories</h3>
+        <p>Top-level category names with browse URLs — pass any name as the <code>category</code> filter to search.</p>
+        <div class="params">
+          <code>depth</code>
+        </div>
+      </div>
+
+      <div class="tool">
+        <div class="icon">📍</div>
+        <h3>kapruka_list_delivery_cities</h3>
+        <p>Search Kapruka's delivery network by canonical name or vernacular alias. Returns up to 50 matches per query.</p>
+        <div class="params">
+          <code>query</code><code>limit</code>
+        </div>
+      </div>
+
+      <div class="tool">
+        <div class="icon">🚚</div>
+        <h3>kapruka_check_delivery</h3>
+        <p>Check whether an order can be delivered to a city on a given date, with the flat LKR rate and a perishable warning when the product code is a cake / flower / combo.</p>
+        <div class="params">
+          <code>city</code><code>delivery_date</code><code>product_id</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Free tier limits</h2>
+    <div class="limits">
+      <ul>
+        <li><strong>60 requests per minute</strong> per client IP. Standard <code>RateLimit-*</code> headers on every response.</li>
+        <li><strong>Read-only</strong> — search, browse, look up. Cart and checkout aren't exposed on the public tier.</li>
+        <li><strong>Server-side cache</strong> of up to 30 minutes — products and categories rarely change minute-to-minute.</li>
+        <li><strong>Need higher limits, write access (cart / checkout), or commercial use?</strong>
+            Reach out at <a href="mailto:hello@kapruka.com">hello@kapruka.com</a>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <div class="row">
+      <div>
+        Built by <a href="https://www.kapruka.com" target="_blank" rel="noopener">Kapruka Techroot Pvt Ltd</a> —
+        the IT subsidiary powering Kapruka.com, Sri Lanka's largest local e-commerce enterprise.
+      </div>
+      <div>
+        <a href="/health">/health</a> · <a href="/stats">/stats</a>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  // ── Tabs
+  const tabs = document.querySelectorAll('.tab');
+  const panels = document.querySelectorAll('[data-tab-panel]');
+  tabs.forEach(t => {
+    t.addEventListener('click', () => {
+      const target = t.getAttribute('data-tab');
+      tabs.forEach(x => x.setAttribute('aria-selected', String(x === t)));
+      panels.forEach(p => {
+        if (p.getAttribute('data-tab-panel') === target) p.setAttribute('data-active', '');
+        else p.removeAttribute('data-active');
+      });
+    });
+  });
+
+  // ── Copy buttons
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sel = btn.getAttribute('data-copy');
+      const el = document.querySelector(sel);
+      if (!el) return;
+      const text = el.innerText.trim();
+      try {
+        await navigator.clipboard.writeText(text);
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = original;
+          btn.classList.remove('copied');
+        }, 1400);
+      } catch (e) {
+        // graceful fallback: select the text
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel2 = window.getSelection();
+        sel2.removeAllRanges();
+        sel2.addRange(range);
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

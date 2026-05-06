@@ -1,0 +1,37 @@
+# ── Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtualenvs
+.venv/
+venv/
+env/
+
+# ── Environment / secrets
+.env
+.env.*
+!.env.example
+
+# ── IDEs / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ── Claude Code local state (machine-specific)
+.claude/settings.local.json
+.claude/projects/
+
+# ── Build artefacts
+build/
+dist/
+
+# ── Local data dumps from exploration scripts
+scripts/api_responses.json

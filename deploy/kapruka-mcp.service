@@ -1,0 +1,38 @@
+[Unit]
+Description=Kapruka MCP Server (Python / streamable-http)
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/srv/kapruka-mcp
+EnvironmentFile=/srv/kapruka-mcp/.env
+ExecStart=/srv/kapruka-mcp/.venv/bin/python -m src.server
+
+Restart=always
+RestartSec=5
+
+# Logging → journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kapruka-mcp
+
+# Security hardening (matches the lightly-trusted public-facing service profile)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target
