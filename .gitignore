@@ -35,3 +35,8 @@ dist/
 
 # ── Local data dumps from exploration scripts
 scripts/api_responses.json
+
+# ── Private keys (mcp-publisher namespace key, etc.)
+*.key.pem
+*.pem
+*.key
