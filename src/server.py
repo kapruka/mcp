@@ -19,6 +19,7 @@ from src.activity_log import ActivityLogger, ActivityLogMiddleware
 from src.cache import cache
 from src.config.settings import settings
 from src.middleware import RateLimitMiddleware
+from src.well_known import well_known_mcp, well_known_mcp_options
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _LANDING_HTML = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -67,6 +68,8 @@ def build_app() -> Starlette:
     app.router.routes.insert(0, Route("/", _landing, methods=["GET"]))
     app.router.routes.insert(1, Route("/health", _health, methods=["GET"]))
     app.router.routes.insert(2, Route("/stats", _stats, methods=["GET"]))
+    app.router.routes.insert(3, Route("/.well-known/mcp.json", well_known_mcp, methods=["GET"]))
+    app.router.routes.insert(4, Route("/.well-known/mcp.json", well_known_mcp_options, methods=["OPTIONS"]))
 
     # ── Activity logging (optional — disabled when ACTIVITY_DB_URL unset).
     # The middleware lazy-inits the pool on first request, so no lifespan plumbing.

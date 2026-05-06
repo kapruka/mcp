@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "com.kapruka/kapruka-mcp",
+  "description": "Free public MCP server for Kapruka.com — Sri Lanka's largest e-commerce platform.",
+  "version": "0.1.0",
+  "title": "Kapruka MCP",
+  "websiteUrl": "https://mcp.kapruka.com/",
+  "repository": {
+    "url": "https://github.com/kapruka/mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.kapruka.com/mcp"
+    }
+  ]
+}
