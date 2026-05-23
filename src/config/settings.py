@@ -39,6 +39,10 @@ class Settings:
     # ── Rate limit (free public tier)
     rate_limit_per_minute: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
     rate_limit_enabled: bool = _bool("RATE_LIMIT_ENABLED", True)
+    # Tighter, separate hourly cap for kapruka_create_order. Each call spins up
+    # a payment session on the upstream backend — abuse posture is different
+    # from read tools, so the global per-minute limiter isn't sufficient.
+    order_rate_limit_per_hour: int = int(os.getenv("ORDER_RATE_LIMIT_PER_HOUR", "30"))
     # IPs we trust to set X-Real-IP / X-Forwarded-For (i.e. our reverse proxy).
     trusted_proxies: list[str] = _csv("TRUSTED_PROXIES", ["127.0.0.1", "::1"])
 

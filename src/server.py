@@ -19,6 +19,7 @@ from src.activity_log import ActivityLogger, ActivityLogMiddleware
 from src.cache import cache
 from src.config.settings import settings
 from src.middleware import RateLimitMiddleware
+from src.order_rate_limit import OrderRateLimitMiddleware
 from src.well_known import well_known_mcp, well_known_mcp_options
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -46,7 +47,7 @@ mcp = FastMCP(
 )
 
 # ── Tool modules: importing them registers their @mcp.tool decorators.
-from src.tools import categories, delivery, products  # noqa: F401, E402
+from src.tools import categories, delivery, orders, products  # noqa: F401, E402
 
 
 async def _landing(_request: Request) -> HTMLResponse:
@@ -94,6 +95,16 @@ def build_app() -> Starlette:
             "Rate limit: %d req/min per IP (trusted proxies: %s)",
             settings.rate_limit_per_minute,
             settings.trusted_proxies,
+        )
+        # add_middleware wraps outermost-last, so this sits in front of the
+        # per-minute limiter and runs first on every /mcp request.
+        app.add_middleware(
+            OrderRateLimitMiddleware,
+            limit_per_hour=settings.order_rate_limit_per_hour,
+        )
+        logger.info(
+            "Order rate limit: %d/hour per IP for kapruka_create_order",
+            settings.order_rate_limit_per_hour,
         )
     else:
         logger.warning("Rate limit DISABLED")

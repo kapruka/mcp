@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Kapruka MCP — connect any LLM to Sri Lanka's largest e-commerce catalog</title>
-<meta name="description" content="Free public MCP server for Kapruka.com. Connect Claude, ChatGPT, Cursor and any MCP-aware client to search products, browse categories, and look up product details." />
+<meta name="description" content="Free public MCP server for Kapruka.com. Connect Claude, ChatGPT, Cursor and any MCP-aware client to search products, browse categories, quote delivery, and create guest-checkout orders with one-click pay links." />
 
 <!-- Open Graph -->
 <meta property="og:title" content="Kapruka MCP Server" />
@@ -21,7 +21,7 @@
   "@context": "https://schema.org",
   "@type": "WebAPI",
   "name": "Kapruka MCP",
-  "description": "Free public MCP server for Kapruka.com — Sri Lanka's largest e-commerce platform. Read-only product, category, and delivery tools.",
+  "description": "Free public MCP server for Kapruka.com — Sri Lanka's largest e-commerce platform. Product, category, delivery and guest-checkout order tools.",
   "documentation": "https://mcp.kapruka.com/",
   "endpointURL": "https://mcp.kapruka.com/mcp",
   "provider": {
@@ -289,8 +289,9 @@
     <h1>Plug any LLM into Sri Lanka's<br/>largest local e-commerce enterprise.</h1>
     <p class="lede">
       A <strong>free public MCP server</strong> for <a href="https://www.kapruka.com" target="_blank" rel="noopener">Kapruka.com</a>.
-      Search products, browse categories, and look up product details from
-      Claude, ChatGPT, Cursor — or any MCP-aware client.
+      Search products, browse categories, quote delivery, and create
+      guest-checkout orders with click-to-pay links — from Claude, ChatGPT,
+      Cursor, or any MCP-aware client.
     </p>
 
     <div class="endpoint">
@@ -303,7 +304,7 @@
         <span>Streamable HTTP transport</span>
         <span>No auth required</span>
         <span>60 requests / min per IP</span>
-        <span>Read-only</span>
+        <span>30 orders / hour per IP</span>
       </div>
     </div>
   </section>
@@ -382,7 +383,7 @@ Auth:        None</code></pre>
 
   <section>
     <h2>Available tools</h2>
-    <p class="section-lede">Five read-only tools for product discovery and delivery quoting — all return structured results in markdown or JSON.</p>
+    <p class="section-lede">Six tools for product discovery, delivery quoting, and guest checkout — all return structured results in markdown or JSON.</p>
 
     <div class="tools">
       <div class="tool">
@@ -429,6 +430,15 @@ Auth:        None</code></pre>
           <code>city</code><code>delivery_date</code><code>product_id</code>
         </div>
       </div>
+
+      <div class="tool">
+        <div class="icon">🛒</div>
+        <h3>kapruka_create_order</h3>
+        <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP.</p>
+        <div class="params">
+          <code>cart</code><code>recipient</code><code>delivery</code><code>sender</code><code>gift_message</code><code>currency</code>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -436,10 +446,11 @@ Auth:        None</code></pre>
     <h2>Free tier limits</h2>
     <div class="limits">
       <ul>
-        <li><strong>60 requests per minute</strong> per client IP. Standard <code>RateLimit-*</code> headers on every response.</li>
-        <li><strong>Read-only</strong> — search, browse, look up. Cart and checkout aren't exposed on the public tier.</li>
-        <li><strong>Server-side cache</strong> of up to 30 minutes — products and categories rarely change minute-to-minute.</li>
-        <li><strong>Need higher limits, write access (cart / checkout), or commercial use?</strong>
+        <li><strong>60 requests per minute</strong> per client IP across all tools. Standard <code>RateLimit-*</code> headers on every response.</li>
+        <li><strong>30 <code>kapruka_create_order</code> calls per hour</strong> per client IP, on top of the per-minute cap.</li>
+        <li><strong>Guest checkout</strong> — orders create a 60-minute click-to-pay link with locked prices. Customer pays in the browser without logging in.</li>
+        <li><strong>Server-side cache</strong> of up to 30 minutes for product / category reads — write endpoints are never cached.</li>
+        <li><strong>Need higher limits, agent partnerships, or commercial integrations?</strong>
             Reach out at <a href="mailto:hello@kapruka.com">hello@kapruka.com</a>.</li>
       </ul>
     </div>

@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -33,10 +33,34 @@ class KaprukaAPIError(Exception):
         self.status_code = status_code
 
 
+def _try_parse_error_envelope(response: httpx.Response) -> Optional[str]:
+    """Return a formatted message if the response body matches Kapruka's
+    standard {"error": {"code", "message", "details"}} envelope; else None."""
+    try:
+        payload = response.json()
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    err = payload.get("error")
+    if not isinstance(err, dict):
+        return None
+    code = err.get("code") or "unknown_error"
+    msg = err.get("message") or ""
+    return f"Error ({code}): {msg}".rstrip(": ").rstrip()
+
+
 def handle_api_error(e: Exception) -> str:
-    """Return a human-readable, actionable error string for any exception."""
+    """Return a human-readable, actionable error string for any exception.
+
+    For 4xx responses, prefers Kapruka's structured error envelope when present
+    (e.g. create_order returns {"error": {"code": "city_not_deliverable", ...}}).
+    """
     if isinstance(e, httpx.HTTPStatusError):
         code = e.response.status_code
+        envelope = _try_parse_error_envelope(e.response) if 400 <= code < 500 else None
+        if envelope:
+            return envelope
         if code == 400:
             return f"Error: Bad request — {e.response.text[:200]}. Check your input parameters."
         if code == 401:
@@ -45,6 +69,8 @@ def handle_api_error(e: Exception) -> str:
             return "Error: Forbidden. Your API key does not have access to this resource."
         if code == 404:
             return "Error: Resource not found. Verify the product_id or category ID is correct."
+        if code == 409:
+            return f"Error: Conflict — {e.response.text[:200]}."
         if code == 422:
             return f"Error: Validation failed — {e.response.text[:300]}."
         if code == 429:
@@ -103,6 +129,34 @@ class KaprukaClient:
             # Bot Fight Mode on www.kapruka.com. Identify ourselves explicitly.
             "User-Agent": "kapruka-mcp/1.0 (+https://mcp.kapruka.com)",
         }
+
+    async def post(
+        self,
+        endpoint: str,
+        body: dict[str, Any],
+        **query_params: Any,
+    ) -> dict[str, Any]:
+        """POST a JSON body to the JSP endpoint. Never cached.
+
+        Used for mutating endpoints like create_order. Currency and other
+        scalar selectors still ride on the query string for consistency with
+        GET endpoints; the body holds the resource representation.
+        """
+        clean_query = {k: v for k, v in query_params.items() if v is not None}
+        query: dict[str, Any] = {"endpoint": endpoint, **clean_query}
+        url = f"{self._base}{_JSP_PATH}"
+        logger.debug("POST %s params=%s body_keys=%s", url, query, list(body.keys()))
+        async with httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=True
+        ) as client:
+            response = await client.post(
+                url,
+                headers={**self._headers, "Content-Type": "application/json"},
+                params=query,
+                json=body,
+            )
+            response.raise_for_status()
+            return _parse_response(response)
 
     async def call(self, endpoint: str, **params: Any) -> dict[str, Any]:
         """Call the JSP endpoint. Cached per (endpoint, params) when TTL>0."""

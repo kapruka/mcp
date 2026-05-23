@@ -19,7 +19,8 @@ WELL_KNOWN_MCP: dict = {
     "name": "Kapruka MCP",
     "description": (
         "Free public MCP server for Kapruka.com — Sri Lanka's largest "
-        "e-commerce platform. Read-only product, category, and delivery tools."
+        "e-commerce platform. Product, category, delivery and guest-checkout "
+        "order tools."
     ),
     "provider": {
         "name": "Kapruka Holdings PLC",
@@ -67,10 +68,18 @@ WELL_KNOWN_MCP: dict = {
                     "date and at what flat LKR rate."
                 ),
             },
+            {
+                "name": "kapruka_create_order",
+                "description": (
+                    "Create a guest-checkout order and return a click-to-pay URL. "
+                    "No Kapruka account required; prices locked for 60 minutes."
+                ),
+            },
         ]
     },
     "rate_limits": {
         "per_ip": "60 requests per minute",
+        "per_ip_orders": "30 create_order calls per hour",
     },
     "documentation": "https://mcp.kapruka.com/",
 }
