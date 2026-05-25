@@ -379,7 +379,7 @@ async def kapruka_track_order(params: TrackOrderInput) -> str:
         JSON schema:
         {
           "order_number": str,
-          "pnref": str,                 # payment reference (usually == order_number)
+          "pnref": str,                 # internal payment reference (numeric; not the same as order_number)
           "status": str,                # received | confirmed | shipped | delivered | cancelled | ...
           "status_display": str,        # human label
           "order_date": str,            # human-formatted, Asia/Colombo
