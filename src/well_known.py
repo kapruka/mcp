@@ -75,6 +75,13 @@ WELL_KNOWN_MCP: dict = {
                     "No Kapruka account required; prices locked for 60 minutes."
                 ),
             },
+            {
+                "name": "kapruka_track_order",
+                "description": (
+                    "Look up status, recipient, items, and delivery progress for a "
+                    "Kapruka order by order number."
+                ),
+            },
         ]
     },
     "rate_limits": {

@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Kapruka MCP — connect any LLM to Sri Lanka's largest e-commerce catalog</title>
-<meta name="description" content="Free public MCP server for Kapruka.com. Connect Claude, ChatGPT, Cursor and any MCP-aware client to search products, browse categories, quote delivery, and create guest-checkout orders with one-click pay links." />
+<meta name="description" content="Free public MCP server for Kapruka.com. Connect Claude, ChatGPT, Cursor and any MCP-aware client to search products, browse categories, quote delivery, create guest-checkout orders with one-click pay links, and track existing orders." />
 
 <!-- Open Graph -->
 <meta property="og:title" content="Kapruka MCP Server" />
@@ -289,9 +289,9 @@
     <h1>Plug any LLM into Sri Lanka's<br/>largest local e-commerce enterprise.</h1>
     <p class="lede">
       A <strong>free public MCP server</strong> for <a href="https://www.kapruka.com" target="_blank" rel="noopener">Kapruka.com</a>.
-      Search products, browse categories, quote delivery, and create
-      guest-checkout orders with click-to-pay links — from Claude, ChatGPT,
-      Cursor, or any MCP-aware client.
+      Search products, browse categories, quote delivery, create guest-checkout
+      orders with click-to-pay links, and track existing orders — from Claude,
+      ChatGPT, Cursor, or any MCP-aware client.
     </p>
 
     <div class="endpoint">
@@ -383,7 +383,7 @@ Auth:        None</code></pre>
 
   <section>
     <h2>Available tools</h2>
-    <p class="section-lede">Six tools for product discovery, delivery quoting, and guest checkout — all return structured results in markdown or JSON.</p>
+    <p class="section-lede">Seven tools for product discovery, delivery quoting, guest checkout, and order tracking — all return structured results in markdown or JSON.</p>
 
     <div class="tools">
       <div class="tool">
@@ -437,6 +437,15 @@ Auth:        None</code></pre>
         <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP.</p>
         <div class="params">
           <code>cart</code><code>recipient</code><code>delivery</code><code>sender</code><code>gift_message</code><code>currency</code>
+        </div>
+      </div>
+
+      <div class="tool">
+        <div class="icon">📦</div>
+        <h3>kapruka_track_order</h3>
+        <p>Look up status, recipient, items, and timestamped delivery progress for any Kapruka order. Customer reads the order number off their confirmation email or order complete page.</p>
+        <div class="params">
+          <code>order_number</code>
         </div>
       </div>
     </div>

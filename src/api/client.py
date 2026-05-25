@@ -24,6 +24,9 @@ _TTL_BY_ENDPOINT: dict[str, float] = {
     "delivery_cities": 86400.0,  # 24 hours — change rarely
     "delivery_rates": 21600.0,   # 6 hours — change seasonally
     # delivery_check is uncached: response embeds "now" and depends on real-time clock
+    # Short window: customers re-poll order status frequently; 30s feels live
+    # while still deduping back-to-back calls from the same chat agent.
+    "order_tracking": 30.0,
 }
 
 

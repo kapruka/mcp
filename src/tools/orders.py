@@ -1,4 +1,4 @@
-"""MCP tool: kapruka_create_order — guest checkout session creation."""
+"""MCP tools: kapruka_create_order, kapruka_track_order."""
 
 import json
 import re
@@ -296,3 +296,228 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
         lines.append(f"_Checkout link expires at {expires_at}. Prices are locked for that window._")
 
     return "\n".join(lines)
+
+
+# ── Tool 2: kapruka_track_order ──────────────────────────────────────────────
+
+# Order numbers from Kapruka's payment system look like "VIMP34456CB2" —
+# uppercase alphanum, occasionally with a trailing digit. We accept lowercase
+# too (customers paste from email) and allow dash/underscore defensively.
+_ORDER_NUMBER_RE = re.compile(r"^[A-Za-z0-9_-]{4,40}$")
+
+
+class TrackOrderInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    order_number: str = Field(
+        ...,
+        description=(
+            "Order number from the customer's Kapruka order confirmation email or the "
+            "order complete page on kapruka.com (e.g. 'VIMP34456CB2'). This is NOT the "
+            "same as the order_ref returned by kapruka_create_order — the customer must "
+            "complete payment first; the Kapruka order number is then emailed to them."
+        ),
+        min_length=4,
+        max_length=40,
+    )
+    response_format: str = Field(
+        default="markdown",
+        description="'markdown' (default) or 'json'.",
+    )
+
+    @field_validator("order_number")
+    @classmethod
+    def validate_order_number(cls, v: str) -> str:
+        if not _ORDER_NUMBER_RE.match(v):
+            raise ValueError(
+                "order_number must be 4–40 chars of letters, digits, dash, or underscore"
+            )
+        return v.upper()
+
+    @field_validator("response_format")
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        if v not in ("markdown", "json"):
+            raise ValueError("response_format must be 'markdown' or 'json'")
+        return v
+
+
+@mcp.tool(
+    name="kapruka_track_order",
+    annotations={
+        "title": "Track Kapruka Order",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        # Response evolves as the order progresses (status changes, new progress
+        # steps appear), so successive calls are not strictly idempotent in shape.
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def kapruka_track_order(params: TrackOrderInput) -> str:
+    """Look up status and delivery progress for a Kapruka order by order number.
+
+    Returns current status (received / confirmed / out-for-delivery / delivered /
+    cancelled), the recipient and delivery details on file, a timestamped progress
+    timeline, the cart contents, and flags for whether a delivery photo or video is
+    available. Use this after a customer has placed and paid for an order and reads
+    back the order number from their confirmation email or the order complete page.
+
+    The order number is NOT the `order_ref` returned by kapruka_create_order
+    (which is the pre-payment checkout reference). Once the customer completes
+    payment in the browser, Kapruka emails them a separate order number — that
+    is what this tool expects.
+
+    Args:
+        params (TrackOrderInput):
+            - order_number (str): Kapruka order number (e.g. 'VIMP34456CB2')
+            - response_format (str): 'markdown' (default) or 'json'
+
+    Returns:
+        str: Order tracking details in the requested format.
+
+        JSON schema:
+        {
+          "order_number": str,
+          "pnref": str,                 # payment reference (usually == order_number)
+          "status": str,                # received | confirmed | shipped | delivered | cancelled | ...
+          "status_display": str,        # human label
+          "order_date": str,            # human-formatted, Asia/Colombo
+          "delivery_date": str,         # human-formatted
+          "shipped_date": str | null,
+          "amount": str,                # LKR string (e.g. "15500.00")
+          "payment_method": str,
+          "comments": str | null,
+          "recipient": {"name": str, "phone": str, "address": str, "city": str},
+          "greeting_message": str | null,
+          "special_instructions": str | null,
+          "progress": [{"step": str, "timestamp": str}],
+          "live_tracking_available": bool,
+          "has_delivery_video": bool,
+          "has_delivery_photo": bool,
+          "items": [{"product_id": str, "name": str, "quantity": int, "selling_price": float}]
+        }
+
+        Error: "Error: <message>" on failure (e.g. order not found).
+    """
+    try:
+        client = KaprukaClient()
+        data = await client.call(
+            "order_tracking",
+            order_number=params.order_number,
+        )
+    except Exception as e:
+        return handle_api_error(e)
+
+    if params.response_format == "json":
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    # ── Markdown
+    order_no = data.get("order_number", params.order_number)
+    status_display = data.get("status_display") or data.get("status", "Unknown")
+    amount = data.get("amount")
+    payment_method = data.get("payment_method")
+    order_date = data.get("order_date")
+    delivery_date = data.get("delivery_date")
+    shipped_date = data.get("shipped_date")
+    comments = data.get("comments")
+
+    lines: list[str] = [
+        f"## Order `{order_no}` — {status_display}",
+        "",
+    ]
+
+    # Headline facts
+    meta_rows: list[str] = []
+    if amount:
+        # Backend returns amount as a string (e.g. "15500.00"). Try to format
+        # as LKR for readability; fall back to raw string if non-numeric.
+        try:
+            meta_rows.append(f"| Total | LKR {float(amount):,.2f} |")
+        except (TypeError, ValueError):
+            meta_rows.append(f"| Total | {amount} |")
+    if payment_method:
+        meta_rows.append(f"| Payment | {payment_method} |")
+    if order_date:
+        meta_rows.append(f"| Ordered | {order_date} |")
+    if shipped_date:
+        meta_rows.append(f"| Shipped | {shipped_date} |")
+    if delivery_date:
+        meta_rows.append(f"| Delivery date | {delivery_date} |")
+    if meta_rows:
+        lines.append("| | |")
+        lines.append("|---|---|")
+        lines.extend(meta_rows)
+        lines.append("")
+
+    # Recipient
+    recipient = data.get("recipient") or {}
+    if recipient:
+        name = recipient.get("name", "")
+        addr_parts = [recipient.get("address"), recipient.get("city")]
+        addr = ", ".join([p for p in addr_parts if p])
+        phone = recipient.get("phone", "")
+        lines.append("**Delivering to**")
+        if name:
+            lines.append(f"- {name}")
+        if addr:
+            lines.append(f"- {addr}")
+        if phone:
+            lines.append(f"- {phone}")
+        lines.append("")
+
+    # Items
+    items = data.get("items") or []
+    if items:
+        lines.append("**Items**")
+        for it in items:
+            qty = it.get("quantity", 1)
+            name = it.get("name", it.get("product_id", "Item"))
+            price = it.get("selling_price")
+            if price is not None:
+                try:
+                    price_str = f" — LKR {float(price):,.2f}"
+                except (TypeError, ValueError):
+                    price_str = f" — {price}"
+            else:
+                price_str = ""
+            lines.append(f"- {qty} × {name}{price_str}")
+        lines.append("")
+
+    # Special instructions / greeting (only show if present, so happy-path stays tidy)
+    greeting = data.get("greeting_message")
+    if greeting:
+        lines.append(f"**Greeting:** {greeting}")
+    special = data.get("special_instructions")
+    if special:
+        lines.append(f"**Delivery instructions:** {special}")
+    if comments:
+        lines.append(f"**Notes:** {comments}")
+    if greeting or special or comments:
+        lines.append("")
+
+    # Progress timeline
+    progress = data.get("progress") or []
+    if progress:
+        lines.append("**Progress**")
+        for step in progress:
+            label = step.get("step", "")
+            ts = step.get("timestamp", "")
+            if ts:
+                lines.append(f"- {ts} — {label}")
+            else:
+                lines.append(f"- {label}")
+        lines.append("")
+
+    # Extras (only mention when relevant — keep happy path tidy)
+    extras: list[str] = []
+    if data.get("live_tracking_available"):
+        extras.append("live tracking available on the Kapruka order page")
+    if data.get("has_delivery_photo"):
+        extras.append("delivery photo available")
+    if data.get("has_delivery_video"):
+        extras.append("delivery video available")
+    if extras:
+        lines.append("_" + "; ".join(extras) + "._")
+
+    return "\n".join(lines).rstrip() + "\n"
