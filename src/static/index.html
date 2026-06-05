@@ -327,13 +327,18 @@
 <pre><code id="code-claude">{
   "mcpServers": {
     "kapruka": {
-      "url": "https://mcp.kapruka.com/mcp"
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.kapruka.com/mcp"
+      ]
     }
   }
 }</code></pre>
       </div>
       <p class="code-note">
-        Save to <code>%APPDATA%\Claude\claude_desktop_config.json</code> on Windows
+        Requires Node.js to be installed. Save to <code>%APPDATA%\Claude\claude_desktop_config.json</code> on Windows
         or <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> on macOS, then restart Claude Desktop.
       </p>
     </div>
