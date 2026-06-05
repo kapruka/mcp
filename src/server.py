@@ -40,7 +40,7 @@ mcp = FastMCP(
         "This is a free public tier; treat results as cached for up to 30 minutes."
     ),
     transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
+        enable_dns_rebinding_protection=settings.enable_dns_rebinding_protection,
         allowed_hosts=settings.public_hosts,
         allowed_origins=settings.public_origins,
     ),

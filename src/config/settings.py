@@ -58,6 +58,16 @@ class Settings:
         "PUBLIC_ORIGINS",
         ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
     )
+    # DNS-rebinding protection (Host + Origin validation) defends *localhost* MCP
+    # servers from malicious web pages. This server is public and fronted by Caddy
+    # (which already pins the Host to mcp.kapruka.com), and we WANT browser-based
+    # agents from any origin to reach it — otherwise hosted demos get a 403. So
+    # allow turning the Host/Origin check off via env. Content-Type validation on
+    # POST stays enforced regardless. Defaults to ON so self-hosters stay safe.
+    enable_dns_rebinding_protection: bool = (
+        os.getenv("ENABLE_DNS_REBINDING_PROTECTION", "true").strip().lower()
+        not in ("false", "0", "no", "off")
+    )
 
     # ── Activity logging (Postgres on Eagle)
     # When set, every MCP HTTP request is logged to the mcp_activity table.
