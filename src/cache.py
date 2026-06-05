@@ -7,6 +7,7 @@ horizontally.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import OrderedDict
 from threading import Lock
@@ -60,4 +61,7 @@ class TTLCache:
             self._store.clear()
 
 
-cache = TTLCache(max_entries=2000)
+# Bumped from 2000 -> 10000: the public server runs the cache full under
+# Agent Challenge traffic, so a bigger ceiling lifts the hit rate. Override
+# with CACHE_MAX_ENTRIES if needed.
+cache = TTLCache(max_entries=int(os.getenv("CACHE_MAX_ENTRIES", "10000")))
