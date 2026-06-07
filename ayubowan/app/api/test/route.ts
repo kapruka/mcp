@@ -4,7 +4,7 @@ import { mcpClient } from "@/lib/mcp";
 
 export async function GET() {
     try {
-        // Let's test two different tools: grabbing categories and searching for "cake"
+
         const categories = await mcpClient.callTool("kapruka_list_categories", { depth: 1 });
 
         const searchResults = await mcpClient.callTool("kapruka_search_products", {
