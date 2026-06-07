@@ -61,13 +61,23 @@ export async function POST(req: Request) {
 
                         for (const toolCall of message.tool_calls) {
                             if (toolCall.type !== 'function') continue;
+                            let args;
+                            try {
+                                args = JSON.parse(toolCall.function.arguments);
+                            } catch (parseError) {
+                                // The LLM generated malformed JSON. Tell it to fix it!
+                                currentMessages.push({
+                                    role: 'tool',
+                                    tool_call_id: toolCall.id,
+                                    content: JSON.stringify({ error: "SyntaxError: Invalid JSON format in arguments. Please fix your syntax and call the tool again." })
+                                });
+                                continue; // Skip the rest of this loop and go back to the LLM
+                            }
 
-                            const args = JSON.parse(toolCall.function.arguments);
-
-
+                            // Run the tool against our MCP client from Day 1
                             const toolResult = await mcpClient.callTool(toolCall.function.name, args);
 
-
+                            // Add the result back to history
                             currentMessages.push({
                                 role: 'tool',
                                 tool_call_id: toolCall.id,
