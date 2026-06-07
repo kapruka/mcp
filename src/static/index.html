@@ -66,6 +66,32 @@
 
   .container { max-width: 920px; margin: 0 auto; padding: 0 24px; }
 
+  /* ── Competition banner ───────────────────────────────────────────────── */
+  .promo-banner {
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    flex-wrap: wrap;
+    padding: 11px 20px;
+    background: linear-gradient(90deg, var(--brand-deep) 0%, var(--brand) 100%);
+    color: #fff; text-align: center;
+    border-bottom: 2px solid var(--accent);
+  }
+  .promo-banner:hover { text-decoration: none; }
+  .promo-banner:hover .promo-cta { background: #fff; color: var(--brand-deep); }
+  .promo-text { font-size: 14px; color: rgba(255,255,255,0.92); line-height: 1.4; }
+  .promo-text strong { color: #fff; }
+  .promo-sep { color: var(--accent); margin: 0 8px; font-weight: 700; }
+  .promo-cta {
+    flex-shrink: 0;
+    background: var(--accent); color: var(--brand-deep);
+    font-weight: 700; font-size: 13px;
+    padding: 6px 14px; border-radius: 999px;
+    transition: background 0.15s, color 0.15s;
+  }
+  @media (max-width: 560px) {
+    .promo-sep { display: none; }
+    .promo-text { font-size: 13px; }
+  }
+
   /* ── Header ─────────────────────────────────────────────────────────── */
   header {
     padding: 28px 0 16px;
@@ -269,6 +295,16 @@
 </style>
 </head>
 <body>
+
+<!-- ── Competition banner ─────────────────────────────────────────────── -->
+<a href="https://www.kapruka.com/contactUs/agentChallenge.html" class="promo-banner">
+  <span class="promo-text">
+    <strong>🏆 Kapruka Agent Challenge</strong>
+    <span class="promo-sep">·</span>
+    Build an AI shopping agent on this MCP and win an Apple&nbsp;M4&nbsp;Mac&nbsp;Mini
+  </span>
+  <span class="promo-cta">Apply&nbsp;→</span>
+</a>
 
 <div class="container">
 
