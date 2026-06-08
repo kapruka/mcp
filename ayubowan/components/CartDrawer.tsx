@@ -36,9 +36,8 @@ export default function CartDrawer() {
                         cart.map((item) => (
                             <div key={item.product_id} className="flex gap-4 border-b pb-4">
                                 <img
-                                    src={item.image_url}
+                                    src={`/api/proxy-image?url=${encodeURIComponent(item.image_url)}`}
                                     alt={item.name}
-                                    referrerPolicy="no-referrer"
                                     onError={(e) => {
                                         e.currentTarget.src = "https://placehold.co/100x100/eeeeee/999999?text=No+Image";
                                     }}

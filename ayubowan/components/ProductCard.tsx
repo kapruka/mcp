@@ -9,9 +9,8 @@ export default function ProductCard({ product }: { product: Product }) {
     return (
         <div className="flex flex-col rounded-lg border bg-white shadow-sm overflow-hidden w-64 flex-shrink-0">
             <img
-                src={product.image_url}
+                src={`/api/proxy-image?url=${encodeURIComponent(product.image_url)}`}
                 alt={product.name}
-                referrerPolicy="no-referrer"
                 onError={(e) => {
                     e.currentTarget.src = "https://placehold.co/400x400/eeeeee/999999?text=No+Image";
                 }}
