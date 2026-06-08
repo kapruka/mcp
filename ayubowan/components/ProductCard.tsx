@@ -8,7 +8,15 @@ export default function ProductCard({ product }: { product: Product }) {
 
     return (
         <div className="flex flex-col rounded-lg border bg-white shadow-sm overflow-hidden w-64 flex-shrink-0">
-            <img src={product.image_url} alt={product.name} className="h-48 w-full object-cover" />
+            <img
+                src={product.image_url}
+                alt={product.name}
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                    e.currentTarget.src = "https://placehold.co/400x400/eeeeee/999999?text=No+Image";
+                }}
+                className="h-48 w-full object-cover"
+            />
             <div className="p-4 flex flex-col flex-1">
                 <h3 className="font-semibold text-gray-800 line-clamp-2 text-sm">{product.name}</h3>
                 <p className="text-orange-600 font-bold mt-2">

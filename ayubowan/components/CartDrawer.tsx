@@ -8,6 +8,14 @@ export default function CartDrawer() {
 
     const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
 
+    const handleCheckout = () => {
+        const cartSummary = cart.map(item => `${item.qty}x ${item.name} (${item.product_id})`).join(', ');
+        window.dispatchEvent(new CustomEvent('trigger-checkout', {
+            detail: `I am ready to checkout. Here is my cart: ${cartSummary}. Please start the checkout process.`
+        }));
+        toggleCart();
+    };
+
     if (!isCartOpen) return null;
 
     return (
@@ -30,7 +38,11 @@ export default function CartDrawer() {
                                 <img
                                     src={item.image_url}
                                     alt={item.name}
-                                    className="h-20 w-20 object-cover rounded-md border"
+                                    referrerPolicy="no-referrer"
+                                    onError={(e) => {
+                                        e.currentTarget.src = "https://placehold.co/100x100/eeeeee/999999?text=No+Image";
+                                    }}
+                                    className="h-20 w-20 object-cover rounded-md border bg-gray-50"
                                 />
                                 <div className="flex-1">
                                     <h3 className="font-semibold text-gray-800 line-clamp-2">{item.name}</h3>
@@ -56,7 +68,10 @@ export default function CartDrawer() {
                             <span>Total:</span>
                             <span>LKR {total.toLocaleString()}</span>
                         </div>
-                        <button className="w-full bg-orange-600 text-white font-bold py-3 rounded-lg hover:bg-orange-700 transition">
+                        <button
+                            onClick={handleCheckout}
+                            className="w-full bg-orange-600 text-white font-bold py-3 rounded-lg hover:bg-orange-700 transition"
+                        >
                             Proceed to Checkout
                         </button>
                     </div>

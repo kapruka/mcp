@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import MessageRenderer from './MessageRenderer';
 
@@ -27,10 +27,10 @@ export default function ChatInterface() {
         scrollToBottom();
     }, [messages, isThinking, activeTools]);
 
-    const handleSend = async () => {
-        if (!input.trim() || isLoading) return;
+    const executeChat = useCallback(async (text: string) => {
+        if (!text.trim() || isLoading) return;
 
-        const userMsg: Message = { role: 'user', content: input };
+        const userMsg: Message = { role: 'user', content: text };
         const newMessages = [...messages, userMsg];
 
         setMessages(newMessages);
@@ -96,6 +96,20 @@ export default function ChatInterface() {
             setIsThinking(false);
             setActiveTools([]);
         }
+    }, [messages, isLoading]);
+
+    useEffect(() => {
+        const handleCheckoutEvent = (e: Event) => {
+            const customEvent = e as CustomEvent<string>;
+            executeChat(customEvent.detail);
+        };
+
+        window.addEventListener('trigger-checkout', handleCheckoutEvent);
+        return () => window.removeEventListener('trigger-checkout', handleCheckoutEvent);
+    }, [executeChat]);
+
+    const handleSend = () => {
+        executeChat(input);
     };
 
     return (
@@ -113,7 +127,7 @@ export default function ChatInterface() {
                     <div className="flex justify-start">
                         <div className="flex items-center gap-2 max-w-[85%] rounded-2xl rounded-tl-sm bg-gray-50 p-3 text-gray-500 border border-gray-200 text-sm">
                             <Loader2 className="h-4 w-4 animate-spin" />
-                            {activeTools.length > 0 ? 'Searching Kapruka catalog...' : 'Thinking...'}
+                            {activeTools.length > 0 ? 'Connecting to Kapruka...' : 'Thinking...'}
                         </div>
                     </div>
                 )}
