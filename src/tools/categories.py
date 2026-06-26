@@ -37,9 +37,18 @@ def _tree_to_markdown(categories: list[dict], indent: int = 0) -> list[str]:
     lines: list[str] = []
     prefix = "  " * indent
     for cat in categories:
-        name = cat["name"]
+        # 1. Sanitize the category name
+        name = cat["name"].replace('[', r'\[').replace(']', r'\]').replace('`', r'\`')
+        
         url = cat.get("url")
-        line = f"{prefix}- [{name}]({url})" if url else f"{prefix}- {name}"
+        
+        # 2. Sanitize the URL
+        if url:
+            url = url.replace('`', '%60')
+            line = f"{prefix}- [{name}]({url})"
+        else:
+            line = f"{prefix}- {name}"
+            
         lines.append(line)
         children = cat.get("children", [])
         if children:
