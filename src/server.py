@@ -6,13 +6,14 @@ Transport: streamable HTTP, fronted by Caddy at https://mcp.kapruka.com.
 """
 
 import logging
+import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http_manager import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.routing import Route
 
 from src.activity_log import ActivityLogger, ActivityLogMiddleware
@@ -47,7 +48,8 @@ mcp = FastMCP(
 )
 
 # ── Tool modules: importing them registers their @mcp.tool decorators.
-from src.tools import categories, delivery, orders, products  # noqa: F401, E402
+from src.tools import cards, categories, delivery, orders, products  # noqa: F401, E402
+from src.cards import card_path  # noqa: E402
 
 
 async def _landing(_request: Request) -> HTMLResponse:
@@ -62,6 +64,24 @@ async def _stats(_request: Request) -> JSONResponse:
     return JSONResponse({"cache": cache.stats()})
 
 
+_CARD_NAME_RE = re.compile(r"^[a-f0-9]{16}\.jpg$")
+
+
+async def _card(request: Request):
+    """Serve a rendered options card. Content-addressed → cache forever."""
+    name = request.path_params["name"]
+    if not _CARD_NAME_RE.match(name):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    path = card_path(name)
+    if not path.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
+
+
 def build_app() -> Starlette:
     """Compose the MCP Starlette app with our health routes + middleware."""
     app: Starlette = mcp.streamable_http_app()
@@ -69,6 +89,7 @@ def build_app() -> Starlette:
     app.router.routes.insert(0, Route("/", _landing, methods=["GET"]))
     app.router.routes.insert(1, Route("/health", _health, methods=["GET"]))
     app.router.routes.insert(2, Route("/stats", _stats, methods=["GET"]))
+    app.router.routes.insert(3, Route("/cards/{name}", _card, methods=["GET"]))
     app.router.routes.insert(3, Route("/.well-known/mcp.json", well_known_mcp, methods=["GET"]))
     app.router.routes.insert(4, Route("/.well-known/mcp.json", well_known_mcp_options, methods=["OPTIONS"]))
 
