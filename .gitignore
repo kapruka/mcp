@@ -40,3 +40,4 @@ scripts/api_responses.json
 *.key.pem
 *.pem
 *.key
+_p2token.txt

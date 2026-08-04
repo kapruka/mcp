@@ -82,27 +82,6 @@ WELL_KNOWN_MCP: dict = {
                     "Kapruka order by order number."
                 ),
             },
-            {
-                "name": "kapruka_customer_details",
-                "description": (
-                    "Look up a customer's account profile by email. Phase 2: "
-                    "serves designated test accounts during rollout."
-                ),
-            },
-            {
-                "name": "kapruka_order_history",
-                "description": (
-                    "List a customer's recent orders by email with status and "
-                    "totals. Phase 2: serves designated test accounts during rollout."
-                ),
-            },
-            {
-                "name": "kapruka_customer_addresses",
-                "description": (
-                    "List the delivery addresses saved on a customer's account "
-                    "by email. Phase 2: serves designated test accounts during rollout."
-                ),
-            },
         ]
     },
     "rate_limits": {

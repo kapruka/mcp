@@ -28,6 +28,10 @@ class Settings:
     # Bearer token for commerce_phase2.jsp (customer-scoped endpoints).
     # Falls back to api_key when unset.
     phase2_api_key: str = os.getenv("KAPRUKA_PHASE2_API_KEY", "")
+    # Caller-facing access token for the Phase 2 customer tools. When set,
+    # every call to those tools must include a matching `access_token`
+    # argument; when unset the tools refuse all calls (fail closed).
+    phase2_access_token: str = os.getenv("KAPRUKA_PHASE2_ACCESS_TOKEN", "")
 
     # ── MCP server bind
     mcp_host: str = os.getenv("MCP_HOST", "127.0.0.1")

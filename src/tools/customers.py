@@ -8,6 +8,7 @@ designated test accounts; other emails return not-found. The tools surface
 that upstream behaviour as a normal error string.
 """
 
+import hmac
 import html as html_mod
 import json
 import re
@@ -15,9 +16,27 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.client import KaprukaClient, handle_api_error
+from src.config.settings import settings
 from src.server import mcp
 
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+_ACCESS_DENIED = (
+    "Error: This tool requires a valid access_token. Phase 2 customer tools are "
+    "in a private preview; contact mcp_support@kapruka.com for access."
+)
+
+
+def _check_access(token: str | None) -> bool:
+    """Constant-time check of the caller-supplied Phase 2 access token.
+
+    Fails closed: if no KAPRUKA_PHASE2_ACCESS_TOKEN is configured server-side,
+    every call is refused rather than left open.
+    """
+    expected = settings.phase2_access_token
+    if not expected or not token:
+        return False
+    return hmac.compare_digest(token.strip(), expected)
 
 
 def _clean(v) -> str:
@@ -59,6 +78,15 @@ class CustomerDetailsInput(BaseModel):
         min_length=6,
         max_length=120,
     )
+    access_token: str = Field(
+        ...,
+        description=(
+            "Phase 2 access token issued by the Kapruka team. Required — "
+            "these tools are in a private preview."
+        ),
+        min_length=8,
+        max_length=200,
+    )
     response_format: str = Field(
         default="markdown",
         description="'markdown' (default) or 'json'.",
@@ -85,6 +113,15 @@ class OrderHistoryInput(BaseModel):
         description="Customer's email address on their Kapruka account.",
         min_length=6,
         max_length=120,
+    )
+    access_token: str = Field(
+        ...,
+        description=(
+            "Phase 2 access token issued by the Kapruka team. Required — "
+            "these tools are in a private preview."
+        ),
+        min_length=8,
+        max_length=200,
     )
     limit: int = Field(
         default=5,
@@ -118,6 +155,15 @@ class CustomerAddressesInput(BaseModel):
         description="Customer's email address on their Kapruka account.",
         min_length=6,
         max_length=120,
+    )
+    access_token: str = Field(
+        ...,
+        description=(
+            "Phase 2 access token issued by the Kapruka team. Required — "
+            "these tools are in a private preview."
+        ),
+        min_length=8,
+        max_length=200,
     )
     response_format: str = Field(
         default="markdown",
@@ -168,6 +214,9 @@ async def kapruka_customer_details(params: CustomerDetailsInput) -> str:
         str: Customer profile in the requested format, or
         "Error: <message>" on failure (e.g. no account for that email).
     """
+    if not _check_access(params.access_token):
+        return _ACCESS_DENIED
+
     try:
         client = KaprukaClient()
         data = await client.call("customer_details", email=params.email)
@@ -245,6 +294,9 @@ async def kapruka_order_history(params: OrderHistoryInput) -> str:
         str: Recent orders in the requested format, or
         "Error: <message>" on failure.
     """
+    if not _check_access(params.access_token):
+        return _ACCESS_DENIED
+
     try:
         client = KaprukaClient()
         data = await client.call(
@@ -333,6 +385,9 @@ async def kapruka_customer_addresses(params: CustomerAddressesInput) -> str:
         str: Saved addresses in the requested format, or
         "Error: <message>" on failure.
     """
+    if not _check_access(params.access_token):
+        return _ACCESS_DENIED
+
     try:
         client = KaprukaClient()
         data = await client.call("customer_addresses", email=params.email)
@@ -375,3 +430,21 @@ async def kapruka_customer_addresses(params: CustomerAddressesInput) -> str:
         for i, a in enumerate(recent, 1):
             _render(a, i)
     return "\n".join(lines)
+
+
+# ── Private preview: keep these tools callable but omit them from tools/list.
+# call_tool resolves by name via ToolManager.get_tool, which is unaffected.
+_HIDDEN_TOOLS = {
+    "kapruka_customer_details",
+    "kapruka_order_history",
+    "kapruka_customer_addresses",
+}
+
+_orig_list_tools = mcp._tool_manager.list_tools
+
+
+def _visible_tools():
+    return [t for t in _orig_list_tools() if t.name not in _HIDDEN_TOOLS]
+
+
+mcp._tool_manager.list_tools = _visible_tools
