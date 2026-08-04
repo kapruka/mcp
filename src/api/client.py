@@ -14,6 +14,10 @@ from src.config.settings import settings
 logger = logging.getLogger(__name__)
 
 _JSP_PATH = "/tools/commerce_phase1.jsp"
+_JSP_PATH_PHASE2 = "/tools/commerce_phase2.jsp"
+
+# Endpoints served by commerce_phase2.jsp (customer-scoped, bearer-authed).
+_PHASE2_ENDPOINTS = {"customer_details", "order_history", "customer_addresses"}
 
 # Per-endpoint cache TTLs (seconds). 0 = uncached.
 _TTL_BY_ENDPOINT: dict[str, float] = {
@@ -27,6 +31,12 @@ _TTL_BY_ENDPOINT: dict[str, float] = {
     # Short window: customers re-poll order status frequently; 30s feels live
     # while still deduping back-to-back calls from the same chat agent.
     "order_tracking": 30.0,
+    # Phase 2 customer data. Cache keys include the email, so entries are
+    # per-customer. Short TTLs: profile/addresses drift slowly, history must
+    # reflect an order placed seconds ago.
+    "customer_details": 300.0,
+    "customer_addresses": 300.0,
+    "order_history": 60.0,
 }
 
 
@@ -132,6 +142,18 @@ class KaprukaClient:
             # Bot Fight Mode on www.kapruka.com. Identify ourselves explicitly.
             "User-Agent": "kapruka-mcp/1.0 (+https://mcp.kapruka.com)",
         }
+        # Phase 2 endpoints use the agent token; falls back to the phase-1 key
+        # when KAPRUKA_PHASE2_API_KEY is unset.
+        self._phase2_headers = {
+            **self._headers,
+            "Authorization": f"Bearer {settings.phase2_api_key or settings.api_key}",
+        }
+
+    def _route(self, endpoint: str) -> tuple[str, dict[str, str]]:
+        """Return (url, headers) for the JSP that serves this endpoint."""
+        if endpoint in _PHASE2_ENDPOINTS:
+            return f"{self._base}{_JSP_PATH_PHASE2}", self._phase2_headers
+        return f"{self._base}{_JSP_PATH}", self._headers
 
     async def post(
         self,
@@ -176,12 +198,12 @@ class KaprukaClient:
             key = None
 
         query: dict[str, Any] = {"endpoint": endpoint, **clean_params}
-        url = f"{self._base}{_JSP_PATH}"
+        url, headers = self._route(endpoint)
         logger.debug("GET %s params=%s", url, query)
         async with httpx.AsyncClient(
             timeout=self._timeout, follow_redirects=True
         ) as client:
-            response = await client.get(url, headers=self._headers, params=query)
+            response = await client.get(url, headers=headers, params=query)
             response.raise_for_status()
             data = _parse_response(response)
 

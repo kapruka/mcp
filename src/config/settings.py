@@ -25,6 +25,9 @@ class Settings:
     # ── Upstream Kapruka API
     api_base_url: str = os.getenv("KAPRUKA_API_BASE_URL", "http://localhost:8080/api/v1")
     api_key: str = os.getenv("KAPRUKA_API_KEY", "")
+    # Bearer token for commerce_phase2.jsp (customer-scoped endpoints).
+    # Falls back to api_key when unset.
+    phase2_api_key: str = os.getenv("KAPRUKA_PHASE2_API_KEY", "")
 
     # ── MCP server bind
     mcp_host: str = os.getenv("MCP_HOST", "127.0.0.1")
