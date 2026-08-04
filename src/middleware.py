@@ -87,11 +87,17 @@ class RateLimitMiddleware:
         limit_per_minute: int,
         trusted_proxies: list[str] | None = None,
         exempt_ips: list[str] | None = None,
+        trusted_limit_per_minute: int = 600,
     ) -> None:
         self.app = app
         self.limiter = IPRateLimiter(limit_per_minute)
         self.trusted_proxies = set(trusted_proxies or ["127.0.0.1", "::1"])
+        # "Exempt" IPs get the trusted tier: a separate, much higher window
+        # rather than no limit at all, so a runaway loop on a first-party box
+        # still gets stopped instead of hammering the service unbounded.
         self.exempt_ips = set(exempt_ips or [])
+        self.trusted_limiter = IPRateLimiter(trusted_limit_per_minute)
+        self.trusted_limit = trusted_limit_per_minute
         self.limit = limit_per_minute
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -105,17 +111,18 @@ class RateLimitMiddleware:
             return
 
         ip = _client_ip(scope, self.trusted_proxies)
-        if ip in self.exempt_ips:
-            await self.app(scope, receive, send)
-            return
-        allowed, remaining, reset_in = self.limiter.check(ip)
+        trusted = ip in self.exempt_ips
+        limit = self.trusted_limit if trusted else self.limit
+        limiter = self.trusted_limiter if trusted else self.limiter
+        allowed, remaining, reset_in = limiter.check(ip)
 
         if not allowed:
+            tier = "Trusted tier" if trusted else "Free tier"
             body = json.dumps(
                 {
                     "error": "rate_limit_exceeded",
                     "message": (
-                        f"Free tier limit of {self.limit} requests/minute exceeded. "
+                        f"{tier} limit of {limit} requests/minute exceeded. "
                         f"Retry in {reset_in}s."
                     ),
                 }
@@ -127,7 +134,7 @@ class RateLimitMiddleware:
                     "headers": [
                         (b"content-type", b"application/json"),
                         (b"retry-after", str(reset_in).encode()),
-                        (b"ratelimit-limit", str(self.limit).encode()),
+                        (b"ratelimit-limit", str(limit).encode()),
                         (b"ratelimit-remaining", b"0"),
                         (b"ratelimit-reset", str(reset_in).encode()),
                     ],
@@ -141,7 +148,7 @@ class RateLimitMiddleware:
                 headers = list(message.get("headers") or [])
                 headers.extend(
                     [
-                        (b"ratelimit-limit", str(self.limit).encode()),
+                        (b"ratelimit-limit", str(limit).encode()),
                         (b"ratelimit-remaining", str(remaining).encode()),
                         (b"ratelimit-reset", str(reset_in).encode()),
                     ]

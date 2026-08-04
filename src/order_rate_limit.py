@@ -122,12 +122,16 @@ class OrderRateLimitMiddleware:
         limit_per_hour: int,
         watched_prefixes: tuple[str, ...] = ("/mcp",),
         exempt_ips: list[str] | None = None,
+        trusted_limit_per_hour: int = 300,
     ) -> None:
         self.app = app
         self.limiter = _HourlyIPLimiter(limit_per_hour)
         self.limit = limit_per_hour
         self.watched_prefixes = watched_prefixes
+        # "Exempt" IPs get a higher ceiling, not a bypass — see middleware.py.
         self.exempt_ips = set(exempt_ips or [])
+        self.trusted_limiter = _HourlyIPLimiter(trusted_limit_per_hour)
+        self.trusted_limit = trusted_limit_per_hour
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -158,17 +162,17 @@ class OrderRateLimitMiddleware:
 
         if _is_order_call(body):
             ip = _client_ip(scope)
-            if ip in self.exempt_ips:
-                allowed = True
-            else:
-                allowed, remaining, reset_in = self.limiter.check(ip)
+            trusted = ip in self.exempt_ips
+            limit = self.trusted_limit if trusted else self.limit
+            limiter = self.trusted_limiter if trusted else self.limiter
+            allowed, remaining, reset_in = limiter.check(ip)
             if not allowed:
                 logger.info("order_rate_limit: blocked ip=%s reset_in=%ds", ip, reset_in)
                 payload = json.dumps(
                     {
                         "error": "order_rate_limit_exceeded",
                         "message": (
-                            f"Free tier order limit of {self.limit}/hour per IP exceeded. "
+                            f"Order limit of {limit}/hour per IP exceeded. "
                             f"Try again in {reset_in}s."
                         ),
                     }
@@ -180,7 +184,7 @@ class OrderRateLimitMiddleware:
                         "headers": [
                             (b"content-type", b"application/json"),
                             (b"retry-after", str(reset_in).encode()),
-                            (b"ratelimit-limit", str(self.limit).encode()),
+                            (b"ratelimit-limit", str(limit).encode()),
                             (b"ratelimit-remaining", b"0"),
                             (b"ratelimit-reset", str(reset_in).encode()),
                         ],

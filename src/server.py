@@ -112,12 +112,15 @@ def build_app() -> Starlette:
             limit_per_minute=settings.rate_limit_per_minute,
             trusted_proxies=settings.trusted_proxies,
             exempt_ips=settings.rate_limit_exempt_ips,
+            trusted_limit_per_minute=settings.rate_limit_trusted_per_minute,
         )
         logger.info(
-            "Rate limit: %d req/min per IP (trusted proxies: %s, exempt: %s)",
+            "Rate limit: %d req/min per IP (trusted proxies: %s; trusted IPs %s "
+            "at %d req/min)",
             settings.rate_limit_per_minute,
             settings.trusted_proxies,
             settings.rate_limit_exempt_ips or "none",
+            settings.rate_limit_trusted_per_minute,
         )
         # add_middleware wraps outermost-last, so this sits in front of the
         # per-minute limiter and runs first on every /mcp request.
@@ -125,6 +128,7 @@ def build_app() -> Starlette:
             OrderRateLimitMiddleware,
             limit_per_hour=settings.order_rate_limit_per_hour,
             exempt_ips=settings.rate_limit_exempt_ips,
+            trusted_limit_per_hour=settings.order_rate_limit_trusted_per_hour,
         )
         logger.info(
             "Order rate limit: %d/hour per IP for kapruka_create_order",
@@ -148,8 +152,14 @@ def main() -> None:
         port=settings.mcp_port,
         log_level=settings.log_level.lower(),
         access_log=False,
-        proxy_headers=True,
-        forwarded_allow_ips=",".join(settings.trusted_proxies),
+        # Do NOT let uvicorn rewrite scope["client"] from X-Forwarded-For:
+        # behind CF->Caddy the XFF chain ends with the CF edge IP, so uvicorn
+        # replaced the peer with the EDGE address — our middlewares then saw a
+        # non-trusted peer, skipped header inspection, and rate-limited whole
+        # Cloudflare PoPs as single clients. All our middlewares (rate limit,
+        # order limit, activity log) derive the real client themselves via
+        # CF-Connecting-IP > X-Real-IP > XFF from the trusted local proxy.
+        proxy_headers=False,
     )
 
 
