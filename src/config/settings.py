@@ -52,6 +52,10 @@ class Settings:
     order_rate_limit_per_hour: int = int(os.getenv("ORDER_RATE_LIMIT_PER_HOUR", "30"))
     # IPs we trust to set X-Real-IP / X-Forwarded-For (i.e. our reverse proxy).
     trusted_proxies: list[str] = _csv("TRUSTED_PROXIES", ["127.0.0.1", "::1"])
+    # Client IPs exempt from BOTH the per-minute limiter and the hourly order
+    # limiter — our own first-party callers (e.g. the eagle-dashboard WhatsApp
+    # sales agent), which fan out many tool calls per customer turn.
+    rate_limit_exempt_ips: list[str] = _csv("RATE_LIMIT_EXEMPT_IPS", [])
 
     # ── MCP DNS-rebinding protection
     # The MCP SDK validates the Host + Origin headers on the streamable-http

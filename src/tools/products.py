@@ -118,7 +118,7 @@ class GetProductInput(BaseModel):
 
     product_id: str = Field(
         ...,
-        description="Kapruka product ID (e.g. 'cake00ka002034', 'EF_PC_CHOC0V2774P00065')",
+        description="Kapruka product ID (e.g. 'cakeXX000000', 'EF_PC_CHOC0V2774P00065')",
         min_length=3,
         max_length=80,
     )
@@ -172,7 +172,7 @@ async def kapruka_get_product(params: GetProductInput) -> str:
 
     Args:
         params (GetProductInput):
-            - product_id (str): Kapruka product ID (e.g. 'cake00ka002034')
+            - product_id (str): Kapruka product ID (e.g. 'cakeXX000000')
             - currency (str): Price currency — LKR (default), USD, GBP, AUD, CAD, EUR
             - type (Optional[str]): Optional type hint (e.g. 'specialgifts')
             - response_format (str): 'markdown' (default) or 'json'

@@ -121,11 +121,13 @@ class OrderRateLimitMiddleware:
         app: ASGIApp,
         limit_per_hour: int,
         watched_prefixes: tuple[str, ...] = ("/mcp",),
+        exempt_ips: list[str] | None = None,
     ) -> None:
         self.app = app
         self.limiter = _HourlyIPLimiter(limit_per_hour)
         self.limit = limit_per_hour
         self.watched_prefixes = watched_prefixes
+        self.exempt_ips = set(exempt_ips or [])
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -156,7 +158,10 @@ class OrderRateLimitMiddleware:
 
         if _is_order_call(body):
             ip = _client_ip(scope)
-            allowed, remaining, reset_in = self.limiter.check(ip)
+            if ip in self.exempt_ips:
+                allowed = True
+            else:
+                allowed, remaining, reset_in = self.limiter.check(ip)
             if not allowed:
                 logger.info("order_rate_limit: blocked ip=%s reset_in=%ds", ip, reset_in)
                 payload = json.dumps(

@@ -36,7 +36,7 @@ class CartItem(BaseModel):
 
     product_id: str = Field(
         ...,
-        description="Kapruka product ID (e.g. 'cake00ka002034').",
+        description="Kapruka product ID (e.g. 'cakeXX000000').",
         min_length=3,
         max_length=80,
     )

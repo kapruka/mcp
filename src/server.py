@@ -111,17 +111,20 @@ def build_app() -> Starlette:
             RateLimitMiddleware,
             limit_per_minute=settings.rate_limit_per_minute,
             trusted_proxies=settings.trusted_proxies,
+            exempt_ips=settings.rate_limit_exempt_ips,
         )
         logger.info(
-            "Rate limit: %d req/min per IP (trusted proxies: %s)",
+            "Rate limit: %d req/min per IP (trusted proxies: %s, exempt: %s)",
             settings.rate_limit_per_minute,
             settings.trusted_proxies,
+            settings.rate_limit_exempt_ips or "none",
         )
         # add_middleware wraps outermost-last, so this sits in front of the
         # per-minute limiter and runs first on every /mcp request.
         app.add_middleware(
             OrderRateLimitMiddleware,
             limit_per_hour=settings.order_rate_limit_per_hour,
+            exempt_ips=settings.rate_limit_exempt_ips,
         )
         logger.info(
             "Order rate limit: %d/hour per IP for kapruka_create_order",

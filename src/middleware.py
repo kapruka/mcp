@@ -65,13 +65,18 @@ def _client_ip(scope: Scope, trusted_proxies: set[str]) -> str:
     peer_ip = client[0] if client else "unknown"
 
     if peer_ip in trusted_proxies:
+        cf_ip = real_ip = xff_ip = None
         for name, value in scope.get("headers") or []:
-            if name == b"x-real-ip":
-                return value.decode("latin-1").strip() or peer_ip
-            if name == b"x-forwarded-for":
-                first = value.decode("latin-1").split(",")[0].strip()
-                if first:
-                    return first
+            if name == b"cf-connecting-ip":
+                cf_ip = value.decode("latin-1").strip()
+            elif name == b"x-real-ip":
+                real_ip = value.decode("latin-1").strip()
+            elif name == b"x-forwarded-for":
+                xff_ip = value.decode("latin-1").split(",")[0].strip()
+        # CF-Connecting-IP is the real client behind Cloudflare; X-Real-IP may
+        # only be the CF edge that Caddy saw. Same precedence as activity_log
+        # and the order limiter.
+        return cf_ip or real_ip or xff_ip or peer_ip
     return peer_ip
 
 
@@ -81,10 +86,12 @@ class RateLimitMiddleware:
         app: ASGIApp,
         limit_per_minute: int,
         trusted_proxies: list[str] | None = None,
+        exempt_ips: list[str] | None = None,
     ) -> None:
         self.app = app
         self.limiter = IPRateLimiter(limit_per_minute)
         self.trusted_proxies = set(trusted_proxies or ["127.0.0.1", "::1"])
+        self.exempt_ips = set(exempt_ips or [])
         self.limit = limit_per_minute
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -98,6 +105,9 @@ class RateLimitMiddleware:
             return
 
         ip = _client_ip(scope, self.trusted_proxies)
+        if ip in self.exempt_ips:
+            await self.app(scope, receive, send)
+            return
         allowed, remaining, reset_in = self.limiter.check(ip)
 
         if not allowed:
