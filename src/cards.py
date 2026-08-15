@@ -42,10 +42,10 @@ FOOTER_FG = (120, 119, 112)
 HAIRLINE = (229, 229, 224)
 
 _CARD_DIR = Path(os.getenv("CARD_DIR", "cards"))
-# 180 days: the Falcon console hotlinks these URLs in chat history, so pruning
-# at 7 days made older conversations show broken images (noticed 2026-08-14).
-# ~135KB/card at current volume is a few MB/day — retention is cheap.
-_CARD_MAX_AGE_S = 180 * 24 * 3600
+# 30 days (Dulith 2026-08-15): the Falcon console hotlinks these URLs in chat
+# history, so the original 7-day prune made older conversations show broken
+# images. A month covers the practical review window for chat history.
+_CARD_MAX_AGE_S = 30 * 24 * 3600
 
 
 def _font_path(bold: bool) -> str | None:
