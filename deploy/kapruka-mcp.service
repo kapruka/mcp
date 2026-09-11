@@ -7,21 +7,16 @@ StartLimitIntervalSec=60
 
 [Service]
 Type=simple
-User=deploy
-Group=deploy
+User=kapruka
+Group=kapruka
 WorkingDirectory=/srv/kapruka-mcp
 EnvironmentFile=/srv/kapruka-mcp/.env
-ExecStart=/srv/kapruka-mcp/.venv/bin/python -m src.server
-
+ExecStart=/srv/kapruka-mcp/.venv/bin/python /srv/kapruka-mcp/cli.py server
 Restart=always
 RestartSec=5
-
-# Logging → journal
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kapruka-mcp
-
-# Security hardening (matches the lightly-trusted public-facing service profile)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

@@ -1,8 +1,11 @@
-# Append this block to /etc/caddy/Caddyfile and run `sudo systemctl reload caddy`.
+# Append this block to /etc/caddy/Caddyfile and run `sudo systemctl reload caddy`
+# (bootstrap-new-box.sh does this when run with DO_CADDY=1).
 # DNS for mcp.kapruka.com points at Cloudflare (CF Business proxy enabled).
-# CF terminates TLS at edge and re-encrypts to origin (Full strict).
-# CF sends the real client IP in the CF-Connecting-IP header — we use that
-# for X-Real-IP so the per-IP rate limiter sees real clients, not CF edges.
+# CF terminates TLS at edge and re-encrypts to origin (Full strict); Caddy
+# obtains the origin cert from Let's Encrypt (HTTP-01 works through CF).
+# CF sends the real client IP in CF-Connecting-IP — we copy it to X-Real-IP so
+# the per-IP rate limiter sees real clients, not CF edges. The app also reads
+# CF-Connecting-IP directly (uvicorn proxy_headers is OFF, see src/server.py).
 
 mcp.kapruka.com {
 	encode zstd gzip
@@ -14,7 +17,6 @@ mcp.kapruka.com {
 	# Reverse-proxy everything else to the Python MCP server.
 	# Streamable-HTTP MCP needs request streaming and long-lived connections.
 	reverse_proxy 127.0.0.1:3200 {
-		# Real client IP comes from Cloudflare; fall back to remote_host if absent.
 		header_up X-Real-IP {http.request.header.CF-Connecting-IP}
 		header_up X-Forwarded-Proto https
 		# Don't buffer SSE; allow long timeouts for MCP streams.
