@@ -35,10 +35,34 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP(
     "kapruka_mcp",
     instructions=(
-        "You are connected to the Kapruka MCP server, which provides read-only access "
-        "to Kapruka.com — Sri Lanka's largest e-commerce platform. Use the available "
-        "tools to search products, browse categories, and look up product details. "
-        "This is a free public tier; treat results as cached for up to 30 minutes."
+        "You are connected to the Kapruka MCP server for Kapruka.com — Sri Lanka's "
+        "largest e-commerce platform. Use the tools to search products, browse "
+        "categories, look up product details, quote delivery, create guest-checkout "
+        "orders (pay link) and track orders. This is a free public tier; treat "
+        "results as cached for up to 30 minutes.\n\n"
+        "DELIVERY-CITY LIMITS — follow these rules:\n"
+        "1. Most gifts ship island-wide, but restaurant food, hotel cakes and liquor "
+        "are delivered only to selected cities (typically the Colombo area). Never "
+        "promise delivery of a product to a city without checking: call "
+        "kapruka_check_delivery with BOTH city and product_id (or read "
+        "delivery.island_wide from kapruka_get_product). Say yes only if "
+        "available is true.\n"
+        "2. Surface the limit proactively: when a product's delivery.island_wide is "
+        "false, tell the customer it is delivered only to selected cities before "
+        "they pick a city. If deliverable_city_count is larger than the list you "
+        "were given, say 'and more' — the list is truncated.\n"
+        "3. On item_deliverable=false / available=false, offer the returned "
+        "deliverable_cities (nearest first) or an island-wide alternative. Do not "
+        "retry kapruka_create_order with the same city.\n"
+        "4. An order ships as ONE shipment, so the whole cart must be deliverable "
+        "to the city (intersection of every item's cities). If kapruka_create_order "
+        "returns city_not_deliverable_for_item, nothing was created: tell the "
+        "customer which item blocks it and offer to change the city or remove/"
+        "replace that item. Never pretend a partial order was placed.\n"
+        "5. Search results carry no delivery info — resolve it per item via "
+        "kapruka_get_product or kapruka_check_delivery.\n"
+        "6. Send canonical city spellings from kapruka_list_delivery_cities / "
+        "deliverable_cities."
     ),
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=settings.enable_dns_rebinding_protection,

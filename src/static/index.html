@@ -434,7 +434,7 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">📦</div>
         <h3>kapruka_get_product</h3>
-        <p>Full details for any product by ID — name, price, stock, variants, images, shipping, and a direct URL.</p>
+        <p>Full details for any product by ID — name, price, stock, variants, images, shipping, delivery scope (island-wide, or the selected cities a food / hotel cake / liquor item can reach), and a direct URL.</p>
         <div class="params">
           <code>product_id</code><code>currency</code>
         </div>
@@ -461,7 +461,7 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">🚚</div>
         <h3>kapruka_check_delivery</h3>
-        <p>Check whether an order can be delivered to a city on a given date, with the flat LKR rate and a perishable warning when the product code is a cake / flower / combo.</p>
+        <p>Check whether an order can be delivered to a city on a given date, with the flat LKR rate. Pass <code>product_id</code> to also check that item's city limit — food, hotel cakes and liquor reach selected cities only — and get the deliverable cities back when it doesn't.</p>
         <div class="params">
           <code>city</code><code>delivery_date</code><code>product_id</code>
         </div>
@@ -470,7 +470,7 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">🛒</div>
         <h3>kapruka_create_order</h3>
-        <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP.</p>
+        <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP. Refused (nothing created) with <code>city_not_deliverable_for_item</code> when any cart item can't reach the delivery city.</p>
         <div class="params">
           <code>cart</code><code>recipient</code><code>delivery</code><code>sender</code><code>gift_message</code><code>currency</code>
         </div>

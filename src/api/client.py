@@ -10,6 +10,7 @@ import httpx
 
 from src.cache import cache
 from src.config.settings import settings
+from src.delivery_scope import fmt_city_list
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,39 @@ def _try_parse_error_envelope(response: httpx.Response) -> Optional[str]:
         return None
     code = err.get("code") or "unknown_error"
     msg = err.get("message") or ""
-    return f"Error ({code}): {msg}".rstrip(": ").rstrip()
+    out = f"Error ({code}): {msg}".rstrip(": ").rstrip()
+    extra = _format_error_details(code, err.get("details"))
+    return f"{out}\n{extra}" if extra else out
+
+
+def _format_error_details(code: str, details: Any) -> str | None:
+    """Surface the actionable parts of an error envelope's `details`.
+
+    Only `city_not_deliverable_for_item` carries structured details worth
+    showing (blocking items + the city set the whole cart can reach). Other
+    codes keep the one-line format so agents see nothing new there.
+    """
+    if code != "city_not_deliverable_for_item" or not isinstance(details, dict):
+        return None
+    lines: list[str] = []
+    items = [i for i in (details.get("items") or []) if isinstance(i, dict)]
+    if items:
+        named = ", ".join(
+            f"{i.get('name') or i.get('product_id')} (`{i.get('product_id')}`)"
+            for i in items
+        )
+        lines.append(f"Blocking item(s): {named}.")
+    cities = details.get("deliverable_cities") or []
+    count = details.get("deliverable_city_count")
+    if cities or count:
+        lines.append(
+            f"The whole cart can be delivered to: {fmt_city_list(cities, count)}."
+        )
+    lines.append(
+        "No order was created. Ask the customer to change the delivery city "
+        "or remove/replace the blocking item — do not retry with the same city."
+    )
+    return "\n".join(lines)
 
 
 def handle_api_error(e: Exception) -> str:

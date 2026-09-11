@@ -45,7 +45,8 @@ WELL_KNOWN_MCP: dict = {
                 "name": "kapruka_get_product",
                 "description": (
                     "Fetch full details for a single product by ID — name, price, "
-                    "stock, variants, images, shipping, and a direct URL."
+                    "stock, variants, images, shipping, delivery scope "
+                    "(island-wide vs selected cities only), and a direct URL."
                 ),
             },
             {
@@ -65,14 +66,18 @@ WELL_KNOWN_MCP: dict = {
                 "name": "kapruka_check_delivery",
                 "description": (
                     "Check whether an order can be delivered to a city on a given "
-                    "date and at what flat LKR rate."
+                    "date and at what flat LKR rate. Pass product_id to also check "
+                    "that item's city limit (food, hotel cakes and liquor reach "
+                    "selected cities only) — available is true only if both pass."
                 ),
             },
             {
                 "name": "kapruka_create_order",
                 "description": (
                     "Create a guest-checkout order and return a click-to-pay URL. "
-                    "No Kapruka account required; prices locked for 60 minutes."
+                    "No Kapruka account required; prices locked for 60 minutes. "
+                    "Rejected (nothing created) with city_not_deliverable_for_item "
+                    "when any cart item cannot reach the delivery city."
                 ),
             },
             {

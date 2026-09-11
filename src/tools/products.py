@@ -8,6 +8,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.client import KaprukaClient, handle_api_error
+from src.delivery_scope import describe_delivery
 from src.server import mcp
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -165,7 +166,16 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     """Fetch full details for a single Kapruka product by its product ID.
 
     Returns name, description, price (with optional currency conversion), stock status,
-    images, variants, shipping info, and a direct product URL.
+    images, variants, shipping info, delivery scope, and a direct product URL.
+
+    Delivery scope: most gifts ship island-wide, but restaurant food, hotel cakes
+    and liquor only reach a limited city set (typically the Colombo area). The
+    `delivery` object is the authority — search results do NOT carry it. When
+    `delivery.island_wide` is false, tell the customer up front that the item is
+    delivered only to selected cities, and confirm their city with
+    kapruka_check_delivery(city, product_id) before promising anything. If
+    `deliverable_city_count` exceeds the returned list, the list is truncated —
+    say "and more", don't treat it as complete.
 
     Note: Some IDs starting with 'CATSYM' are category landing pages, not purchasable
     products — this tool will flag those clearly.
@@ -196,6 +206,11 @@ async def kapruka_get_product(params: GetProductInput) -> str:
           "images": [str],              # list of full-resolution image URLs
           "attributes": {"type": str, "subtype": str, "weight": str, "vendor": str},
           "shipping": {"ships_from": str, "ships_internationally": bool, "restricted_countries": [str]},
+          "delivery": {
+            "island_wide": bool,
+            "deliverable_city_count": int,   # only when island_wide=false; TRUE total
+            "deliverable_cities": [str]      # only when island_wide=false; capped at 60
+          },
           "rating": null,
           "url": str
         }
@@ -256,6 +271,10 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     shipping = data.get("shipping", {})
     intl = "Yes" if shipping.get("ships_internationally") else "No"
     lines.append(f"**International shipping**: {intl}")
+
+    delivery_line = describe_delivery(data.get("delivery"))
+    if delivery_line:
+        lines.append(f"**Delivery**: {delivery_line}")
 
     lines.append("")
     summary = data.get("summary") or data.get("description", "")
@@ -396,6 +415,11 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
 
     By default, category landing pages (CATSYM entries with price=0) are filtered out so results
     contain only purchasable products. Set include_stubs=true to include them.
+
+    Search results carry NO delivery-scope information. Food, hotel cakes and liquor
+    are delivered only to selected cities — never infer deliverability from a search
+    hit. Before quoting delivery on a specific item, call kapruka_get_product (read
+    `delivery.island_wide`) or kapruka_check_delivery with `product_id`.
 
     Args:
         params (SearchProductsInput):

@@ -7,6 +7,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.client import KaprukaClient, handle_api_error
+from src.delivery_scope import fmt_city_list
 from src.server import mcp
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -186,10 +187,13 @@ class CheckDeliveryInput(BaseModel):
     product_id: Optional[str] = Field(
         default=None,
         description=(
-            "Optional product ID. If provided and the product looks perishable "
-            "(cake/flower/combo codes), a freshness warning is added when the chosen "
-            "date is more than 1 day out."
+            "Product ID to check the city AGAINST THAT ITEM'S delivery scope. "
+            "Food, hotel cakes and liquor only reach selected cities — always pass "
+            "this when a customer names a product and a city, and only promise "
+            "delivery if `available` is true. Also adds a freshness warning for "
+            "perishable codes (cake/flower/combo) when the date is >1 day out."
         ),
+        max_length=80,
     )
     response_format: str = Field(
         default="markdown",
@@ -248,15 +252,24 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     and — if not — the next available date plus reason. Kapruka delivers as a
     single shipment per order at one flat rate regardless of item count.
 
-    If a `product_id` is supplied and the code matches a perishable family
-    (CAKE*, FLOWER*, COMBO*), an extra warning is added when the chosen
-    delivery date is more than 1 day out.
+    Pass `product_id` whenever the customer has named a product: the answer then
+    also checks that ITEM's delivery scope (restaurant food, hotel cakes and
+    liquor only reach selected cities, typically the Colombo area). With a
+    product_id, `available` is true only if the date is open AND the item is
+    deliverable to that city. When `item_deliverable` is false, offer the
+    customer one of the returned `deliverable_cities` or an island-wide
+    alternative — do not attempt kapruka_create_order with the same city, it
+    will be rejected. An unknown product_id is silently ignored (no item fields
+    in the result), so check `item_deliverable` is present before relying on it.
+
+    Perishable codes (CAKE*, FLOWER*, COMBO*) additionally get a freshness
+    warning when the chosen delivery date is more than 1 day out.
 
     Args:
         params (CheckDeliveryInput):
             - city (str): Canonical city name (e.g. 'Colombo 03', 'Galle')
             - delivery_date (Optional[str]): YYYY-MM-DD; defaults to today (LK time)
-            - product_id (Optional[str]): Optional, enables perishable warning
+            - product_id (Optional[str]): Check the city against this item's delivery scope
             - response_format (str): 'markdown' (default) or 'json'
 
     Returns:
@@ -267,11 +280,13 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
           "city": str,
           "now": str,                       # ISO timestamp, Sri Lanka time
           "checked_date": str,              # YYYY-MM-DD
-          "available": bool,
+          "available": bool,                # date open AND (if product_id) item deliverable
           "rate": number,                   # flat LKR rate per order
           "currency": "LKR",
-          "reason": str | null,             # populated when available=false
-          "next_available_date": str|null,  # populated when available=false
+          "reason": str | null,             # date-block message, else "This item is not delivered to <City>."
+          "next_available_date": str|null,  # only for date blocks
+          "item_deliverable": bool,         # only when product_id resolved to a real product
+          "deliverable_cities": [str],      # only when item_deliverable=false (capped at 60)
           "perishable_warning": str | null  # populated when product_id is perishable
         }
     """
@@ -283,6 +298,7 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
             "delivery_check",
             city=params.city,
             delivery_date=target_date,
+            product_id=params.product_id,
         )
     except Exception as e:
         return handle_api_error(e)
@@ -303,20 +319,45 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     rate = data.get("rate")
     currency = data.get("currency", "LKR")
 
+    # Present only when product_id resolved to a real product.
+    item_deliverable = data.get("item_deliverable")
+    item_blocked = item_deliverable is False
+
     lines = [f"## Delivery to {city} on {checked}"]
     if available:
         if rate is not None:
             lines.append(f"**Available** — flat rate {currency} {rate:,}")
         else:
             lines.append("**Available**")
+        if item_deliverable is True:
+            lines.append(f"- `{params.product_id}` can be delivered to {city}.")
     else:
-        lines.append("**Not available on this date.**")
+        if item_blocked:
+            # Item scope beats the date: a new date won't help, a new city will.
+            # `reason` may carry only the date message when both fail, so state
+            # the item block explicitly.
+            lines.append(f"**Not available — `{params.product_id}` is not delivered to {city}.**")
+            cities = data.get("deliverable_cities") or []
+            if cities:
+                lines.append(
+                    f"- This item is delivered only to selected cities: "
+                    f"{fmt_city_list(cities, len(cities))}."
+                )
+            lines.append(
+                "- Offer the customer one of those cities or an island-wide "
+                "alternative product. Do not place the order to this city."
+            )
+        else:
+            lines.append("**Not available on this date.**")
         reason = data.get("reason")
-        if reason:
+        # Skip the API's own item message when we've already rendered it above.
+        if reason and not (item_blocked and "not delivered to" in reason):
             lines.append(f"- {reason}")
         next_date = data.get("next_available_date")
         if next_date:
-            lines.append(f"- Next available: **{next_date}**")
+            lines.append(f"- Next available date: **{next_date}**")
+        if item_deliverable is True:
+            lines.append(f"- `{params.product_id}` itself can be delivered to {city} — only the date is the issue.")
         if rate is not None:
             lines.append(f"- Rate when available: {currency} {rate:,}")
 

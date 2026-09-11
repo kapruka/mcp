@@ -78,7 +78,14 @@ class Delivery(BaseModel):
     address: str = Field(..., description="Street address.", min_length=3, max_length=250)
     city: str = Field(
         ...,
-        description="Must be a Kapruka delivery city — use kapruka_list_delivery_cities to look up valid names.",
+        description=(
+            "Must be a Kapruka delivery city (canonical name from "
+            "kapruka_list_delivery_cities) that EVERY cart item can reach. The order "
+            "ships as one shipment, so food / hotel cake / liquor items restrict the "
+            "whole cart to their city set — verify with kapruka_check_delivery"
+            "(city, product_id) first; otherwise the order is rejected with "
+            "city_not_deliverable_for_item."
+        ),
         min_length=2,
         max_length=100,
     )
@@ -242,7 +249,17 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
 
         Error: "Error (<code>): <message>" on failure. Common codes:
           empty_cart, missing_field, past_delivery_date, product_not_found,
-          product_out_of_stock, city_not_deliverable, date_not_deliverable.
+          product_out_of_stock, city_not_deliverable (city not in the network at
+          all), date_not_deliverable, city_not_deliverable_for_item.
+
+        city_not_deliverable_for_item (HTTP 422): at least one cart item (food /
+        hotel cake / liquor) cannot reach delivery.city. NOTHING is created — the
+        API never places a partial order and neither should you. The error text
+        names every blocking item and lists the cities the whole cart CAN go to.
+        Tell the customer which item blocks the order and offer to (a) change the
+        city to one of those, or (b) remove/replace that item. Never retry with
+        the same city. Avoid this entirely by calling kapruka_check_delivery with
+        `product_id` for each limited item before ordering.
     """
     body: dict = {
         "auth_token": None,
