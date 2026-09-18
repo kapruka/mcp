@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kapruka-mcp"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server for Kapruka.com — Sri Lanka's largest e-commerce platform"
 requires-python = ">=3.11"
 dependencies = [

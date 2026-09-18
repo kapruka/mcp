@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 
 _JSP_PATH = "/tools/commerce_phase1.jsp"
 _JSP_PATH_PHASE2 = "/tools/commerce_phase2.jsp"
+_JSP_PATH_PHASE3 = "/tools/commerce_phase3.jsp"
 
 # Endpoints served by commerce_phase2.jsp (customer-scoped, bearer-authed).
 _PHASE2_ENDPOINTS = {"customer_details", "order_history", "customer_addresses"}
+# Endpoints served by commerce_phase3.jsp (custom cakes; separate agent token).
+_PHASE3_ENDPOINTS = {"custom_cake_options", "custom_cake_request", "custom_cake_status"}
 
 # Per-endpoint cache TTLs (seconds). 0 = uncached.
 _TTL_BY_ENDPOINT: dict[str, float] = {
@@ -181,11 +184,19 @@ class KaprukaClient:
             **self._headers,
             "Authorization": f"Bearer {settings.phase2_api_key or settings.api_key}",
         }
+        self._phase3_headers = {
+            **self._headers,
+            "Authorization": (
+                f"Bearer {settings.phase3_api_key or settings.phase2_api_key or settings.api_key}"
+            ),
+        }
 
     def _route(self, endpoint: str) -> tuple[str, dict[str, str]]:
         """Return (url, headers) for the JSP that serves this endpoint."""
         if endpoint in _PHASE2_ENDPOINTS:
             return f"{self._base}{_JSP_PATH_PHASE2}", self._phase2_headers
+        if endpoint in _PHASE3_ENDPOINTS:
+            return f"{self._base}{_JSP_PATH_PHASE3}", self._phase3_headers
         return f"{self._base}{_JSP_PATH}", self._headers
 
     async def post(
@@ -202,14 +213,14 @@ class KaprukaClient:
         """
         clean_query = {k: v for k, v in query_params.items() if v is not None}
         query: dict[str, Any] = {"endpoint": endpoint, **clean_query}
-        url = f"{self._base}{_JSP_PATH}"
+        url, headers = self._route(endpoint)
         logger.debug("POST %s params=%s body_keys=%s", url, query, list(body.keys()))
         async with httpx.AsyncClient(
             timeout=self._timeout, follow_redirects=True
         ) as client:
             response = await client.post(
                 url,
-                headers={**self._headers, "Content-Type": "application/json"},
+                headers={**headers, "Content-Type": "application/json"},
                 params=query,
                 json=body,
             )

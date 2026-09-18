@@ -6,7 +6,7 @@ import uuid
 from datetime import date as Date, datetime, timedelta, timezone
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.api.client import KaprukaClient, handle_api_error
 from src.server import mcp
@@ -32,25 +32,73 @@ _PHONE_RE = re.compile(r"^[+\d][\d\s\-()]{6,30}$")
 
 
 class CartItem(BaseModel):
+    """One cart line — EITHER a catalogue product OR a quoted custom cake.
+
+    Catalogue line:   {"product_id": "...", "quantity": 1, "icing_text": "..."}
+    Custom cake line: {"custom_cake_request_id": "...", "phone": "+9477..."}
+    The custom cake line is turned into the staff-quoted cake server-side
+    (name, picture, price); quantity is always 1 and no price is ever sent.
+    """
+
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    product_id: str = Field(
-        ...,
-        description="Kapruka product ID (e.g. 'cakeXX000000').",
+    product_id: Optional[str] = Field(
+        default=None,
+        description="Kapruka product ID (e.g. 'cakeXX000000'). Catalogue line.",
         min_length=3,
         max_length=80,
     )
-    quantity: int = Field(
-        default=1,
-        description=f"Quantity (1–{_MAX_QTY_PER_ITEM}).",
+    quantity: Optional[int] = Field(
+        default=None,
+        description=f"Quantity (1–{_MAX_QTY_PER_ITEM}, default 1). Catalogue lines only.",
         ge=1,
         le=_MAX_QTY_PER_ITEM,
     )
     icing_text: Optional[str] = Field(
         default=None,
-        description="Cake icing text. Silently ignored for non-cake products.",
+        description="Cake icing text. Silently ignored for non-cake products. Catalogue lines only.",
         max_length=_MAX_ICING_TEXT,
     )
+    custom_cake_request_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "request_id of a custom cake that kapruka_custom_cake_status reports as "
+            "'quoted'. Orders the staff-quoted cake (quantity 1). Requires `phone`."
+        ),
+        min_length=6,
+        max_length=80,
+    )
+    phone: Optional[str] = Field(
+        default=None,
+        description="The customer.phone the custom cake request was made with (custom cake lines only).",
+        min_length=7,
+        max_length=30,
+    )
+
+    @model_validator(mode="after")
+    def one_kind_of_line(self) -> "CartItem":
+        is_product = self.product_id is not None
+        is_cake = self.custom_cake_request_id is not None
+        if is_product == is_cake:
+            raise ValueError("each cart item needs exactly one of product_id or custom_cake_request_id")
+        if is_cake:
+            if not self.phone or not _PHONE_RE.match(self.phone):
+                raise ValueError("custom cake lines need the customer's phone (as used on the request)")
+            if self.quantity not in (None, 1):
+                raise ValueError("custom cake lines always have quantity 1")
+            if self.icing_text is not None:
+                raise ValueError("icing_text is not accepted on custom cake lines (the greeting was set on the request)")
+        else:
+            if self.phone is not None:
+                raise ValueError("phone is only used on custom cake lines")
+            if self.quantity is None:
+                self.quantity = 1
+        return self
+
+    def to_api(self) -> dict:
+        if self.custom_cake_request_id is not None:
+            return {"custom_cake_request_id": self.custom_cake_request_id, "phone": self.phone}
+        return self.model_dump(exclude_none=True, exclude={"custom_cake_request_id", "phone"})
 
 
 class Recipient(BaseModel):
@@ -222,7 +270,12 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
 
     Args:
         params (CreateOrderInput):
-            - cart (list[CartItem]): 1–30 items. Each: product_id, quantity (default 1), optional icing_text (cakes only).
+            - cart (list[CartItem]): 1–30 lines. Catalogue line: product_id, quantity (default 1), optional icing_text (cakes only).
+              Custom cake line: custom_cake_request_id + phone — orders the cake Kapruka staff quoted via
+              kapruka_custom_cake_status (status must be 'quoted'; quantity is always 1; never send a price).
+              Lines can be mixed in one order — one delivery fee covers everything; the whole cart must be
+              deliverable to delivery.city. Only place a custom cake order after the customer clearly
+              accepted the quoted total.
             - recipient (Recipient): name + phone (E.164 +9477… or local 077…)
             - delivery (Delivery): address, city (must be Kapruka-deliverable — use kapruka_list_delivery_cities), location_type (house/apartment/office/other, default house), date (YYYY-MM-DD, today-or-future Asia/Colombo), optional instructions
             - sender (Sender): name + anonymous flag
@@ -237,6 +290,7 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
         {
           "checkout_url": str,           # Open in browser to pay (no login required)
           "order_ref": str,              # e.g. "ORD-20260520-7823"
+          "order_id": str,               # id used by the bank-deposit flow
           "summary": {
             "items_total":   number,
             "delivery_fee":  number,
@@ -252,6 +306,13 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
           product_out_of_stock, city_not_deliverable (city not in the network at
           all), date_not_deliverable, city_not_deliverable_for_item.
 
+        Custom cake lines add: request_not_found (404 — wrong id/phone or staff
+        removed it), quote_not_ready (409 — staff haven't priced it; check
+        kapruka_custom_cake_status later), quote_expired (410 — submit a new
+        kapruka_custom_cake_request). summary.items_total may differ from the
+        quoted cake total by a few rupees (USD round-trip) — quote the summary
+        numbers when asking for payment.
+
         city_not_deliverable_for_item (HTTP 422): at least one cart item (food /
         hotel cake / liquor) cannot reach delivery.city. NOTHING is created — the
         API never places a partial order and neither should you. The error text
@@ -264,7 +325,7 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
     body: dict = {
         "auth_token": None,
         "idempotency_key": str(uuid.uuid4()),
-        "cart": [item.model_dump(exclude_none=True) for item in params.cart],
+        "cart": [item.to_api() for item in params.cart],
         "recipient": params.recipient.model_dump(),
         "delivery": params.delivery.model_dump(exclude_none=True),
         "sender": params.sender.model_dump(),

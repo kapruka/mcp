@@ -73,6 +73,7 @@ mcp = FastMCP(
 
 # ── Tool modules: importing them registers their @mcp.tool decorators.
 from src.tools import cards, categories, customers, delivery, orders, products  # noqa: F401, E402
+from src.tools import custom_cakes  # noqa: F401, E402  (after customers: shares _HIDDEN_TOOLS)
 from src.cards import card_path  # noqa: E402
 
 

@@ -32,6 +32,20 @@ class Settings:
     # every call to those tools must include a matching `access_token`
     # argument; when unset the tools refuse all calls (fail closed).
     phase2_access_token: str = os.getenv("KAPRUKA_PHASE2_ACCESS_TOKEN", "")
+    # Bearer token for commerce_phase3.jsp (custom cakes, bank deposit). The
+    # backend issues a separate agent token for phase 3; falls back to the
+    # phase-2 then phase-1 keys so a unified token also just works.
+    phase3_api_key: str = os.getenv("KAPRUKA_PHASE3_API_KEY", "")
+    # Custom-cake tools are "closed MCP": callable only from first-party IPs.
+    # Defaults to the trusted-tier list (eagle) so no extra config is needed;
+    # override to split the two concerns.
+    custom_cake_trusted_ips: list[str] = _csv(
+        "CUSTOM_CAKE_TRUSTED_IPS", _csv("RATE_LIMIT_EXEMPT_IPS", [])
+    )
+    # Cap for images fetched on behalf of the agent (brief: 5 MB before base64).
+    custom_cake_image_max_bytes: int = int(
+        os.getenv("CUSTOM_CAKE_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
+    )
 
     # ── MCP server bind
     mcp_host: str = os.getenv("MCP_HOST", "127.0.0.1")
