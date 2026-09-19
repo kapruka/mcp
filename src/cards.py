@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 CELL_W = 360
 IMG_H = 360
 CAPTION_H = 108
+# Extra caption height when any cell carries a price note ("≈ JPY 2,544").
+NOTE_H = 30
 FOOTER_H = 46
 GAP = 8
 MARGIN = 8
@@ -38,6 +40,7 @@ BADGE_FG = (255, 255, 255)
 BG = (255, 255, 255)
 CAPTION_NAME = (68, 68, 65)
 CAPTION_PRICE = (28, 28, 26)
+CAPTION_NOTE = (110, 108, 100)  # secondary line under the price — never louder than it
 FOOTER_FG = (120, 119, 112)
 HAIRLINE = (229, 229, 224)
 
@@ -98,6 +101,19 @@ def _fmt_price(amount: float, currency: str) -> str:
     return f"{currency} {amount:,.2f}"
 
 
+def fmt_courtesy(amount: float, per_usd: float, currency: str) -> str:
+    """"≈ JPY 2,544" — the home-currency approximation of a USD price.
+
+    Whole units, coarser as the number grows (≥10,000 → nearest 100, ≥100,000 →
+    nearest 1,000) so the bracket never out-shouts the price beside it. This is
+    the SAME rule as eagle's formatLocal (afzal-currency.ts): the caller passes
+    the rate it used for its own text, so the card and the chat text agree."""
+    v = float(amount) * float(per_usd)
+    step = 1000 if v >= 100_000 else 100 if v >= 10_000 else 1
+    rounded = int(round(v / step) * step)
+    return f"≈ {currency.upper()} {rounded:,}"
+
+
 def _reply_hint(refs: list[int]) -> str:
     if len(refs) == 1:
         return f"Reply {refs[0]} to choose"
@@ -109,29 +125,38 @@ class CardItem:
     for a photo-less placeholder cell)."""
 
     def __init__(self, ref: int, product_id: str, name: str, price_amount: float,
-                 currency: str, image: bytes | None):
+                 currency: str, image: bytes | None, price_note: str | None = None):
         self.ref = ref
         self.product_id = product_id
         self.name = name
         self.price_amount = price_amount
         self.currency = currency
         self.image = image
+        # Secondary line under the price, e.g. "≈ JPY 2,544" for an overseas
+        # customer whose card is charged in USD. Optional; None = no line.
+        self.price_note = price_note
 
 
-def render_card(items: list[CardItem]) -> bytes:
-    """Compose the card JPEG. Pure CPU (Pillow); ~50-150ms for 3 cells."""
+def render_card(items: list[CardItem], footer_note: str | None = None) -> bytes:
+    """Compose the card JPEG. Pure CPU (Pillow); ~50-150ms for 3 cells.
+
+    `footer_note` is appended to the reply hint ("Reply 1 or 2 to choose •
+    Checkout charges USD") — used when the card's currency is not what the
+    customer's statement will show."""
     n = len(items)
     if not 1 <= n <= 4:
         raise ValueError("1-4 items per card")
 
+    caption_h = CAPTION_H + (NOTE_H if any(it.price_note for it in items) else 0)
     width = MARGIN * 2 + CELL_W * n + GAP * (n - 1)
-    height = MARGIN + IMG_H + CAPTION_H + FOOTER_H + MARGIN
+    height = MARGIN + IMG_H + caption_h + FOOTER_H + MARGIN
     card = Image.new("RGB", (width, height), BG)
     draw = ImageDraw.Draw(card)
 
     f_badge = _font(30, bold=True)
     f_name = _font(21)
     f_price = _font(30, bold=True)
+    f_note = _font(20)
     f_footer = _font(17)
 
     for i, it in enumerate(items):
@@ -160,17 +185,22 @@ def render_card(items: list[CardItem]) -> bytes:
         draw.text((x0 + 10, cy + 14), name, font=f_name, fill=CAPTION_NAME)
         draw.text((x0 + 10, cy + 48), _fmt_price(it.price_amount, it.currency),
                   font=f_price, fill=CAPTION_PRICE)
+        if it.price_note:
+            note = _ellipsize(draw, it.price_note.strip(), f_note, CELL_W - 20)
+            draw.text((x0 + 10, cy + 90), note, font=f_note, fill=CAPTION_NOTE)
 
         # Hairline between cells.
         if i > 0:
             lx = x0 - GAP // 2
-            draw.line((lx, MARGIN, lx, MARGIN + IMG_H + CAPTION_H), fill=HAIRLINE, width=1)
+            draw.line((lx, MARGIN, lx, MARGIN + IMG_H + caption_h), fill=HAIRLINE, width=1)
 
     # Footer strip.
-    fy = MARGIN + IMG_H + CAPTION_H
+    fy = MARGIN + IMG_H + caption_h
     draw.line((MARGIN, fy, width - MARGIN, fy), fill=HAIRLINE, width=1)
     draw.text((MARGIN + 6, fy + 13), "kapruka.com", font=f_footer, fill=FOOTER_FG)
     hint = _reply_hint([it.ref for it in items])
+    if footer_note:
+        hint = f"{hint}  •  {footer_note.strip()}"
     hw = draw.textlength(hint, font=f_footer)
     draw.text((width - MARGIN - 6 - hw, fy + 13), hint, font=f_footer, fill=FOOTER_FG)
 
@@ -179,19 +209,21 @@ def render_card(items: list[CardItem]) -> bytes:
     return out.getvalue()
 
 
-def card_filename(items: list[CardItem]) -> str:
-    """Content-addressed name: same products+refs+prices → same file forever."""
-    key = "|".join(f"{it.ref}:{it.product_id}:{it.price_amount}:{it.currency}" for it in items)
+def card_filename(items: list[CardItem], footer_note: str | None = None) -> str:
+    """Content-addressed name: same products+refs+prices+notes → same file forever."""
+    key = "|".join(f"{it.ref}:{it.product_id}:{it.price_amount}:{it.currency}:{it.price_note or ''}" for it in items)
+    if footer_note:
+        key += f"|footer:{footer_note}"
     return hashlib.sha1(key.encode()).hexdigest()[:16] + ".jpg"
 
 
-def save_card(items: list[CardItem]) -> str:
+def save_card(items: list[CardItem], footer_note: str | None = None) -> str:
     """Render (or reuse cached) card; returns the filename under CARD_DIR."""
     _CARD_DIR.mkdir(parents=True, exist_ok=True)
-    name = card_filename(items)
+    name = card_filename(items, footer_note)
     path = _CARD_DIR / name
     if not path.is_file():
-        path.write_bytes(render_card(items))
+        path.write_bytes(render_card(items, footer_note))
         _prune()
     return name
 

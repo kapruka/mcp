@@ -9,7 +9,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.client import KaprukaClient, handle_api_error
-from src.cards import CardItem, save_card
+from src.cards import CardItem, fmt_courtesy, save_card
 from src.server import mcp
 from src.tools.orders import SUPPORTED_CURRENCIES
 
@@ -26,11 +26,27 @@ class CardProduct(BaseModel):
     ref: int = Field(..., description="The reference number to print on this product's badge (customer replies with it). Assign sequentially per conversation and NEVER reuse a number.", ge=1, le=99)
 
 
+class Courtesy(BaseModel):
+    """A home-currency approximation to print under each USD price.
+
+    The CALLER supplies the rate it used for its own chat text, so the card and
+    the text agree to the unit; the card never converts on its own. Only
+    applied when the card is priced in USD — the courtesy figure describes
+    what a USD charge will look like on the customer's statement."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    currency: str = Field(..., description="ISO-4217 code of the customer's home currency, e.g. JPY.", min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    per_usd: float = Field(..., description="Units of that currency per 1 USD, as used for the chat text.", gt=0, lt=1_000_000)
+
+
 class RenderOptionsCardInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     items: list[CardProduct] = Field(..., description="1-4 products to show side by side.", min_length=1, max_length=4)
     currency: str = Field(default="LKR", description=f"Price currency: {', '.join(SUPPORTED_CURRENCIES)}.")
+    courtesy: Courtesy | None = Field(default=None, description="Optional: print '≈ <home currency>' under each USD price (see Courtesy). Ignored unless currency is USD.")
+    footer_note: str | None = Field(default=None, description="Optional short note appended to the footer's reply hint, e.g. 'Checkout charges USD'.", max_length=60)
 
     @field_validator("currency")
     @classmethod
@@ -99,13 +115,18 @@ async def kapruka_render_options_card(params: RenderOptionsCardInput) -> str:
         params (RenderOptionsCardInput):
             - items (list[CardProduct]): 1-4 of {product_id, ref}
             - currency (str): LKR (default), USD, GBP, AUD, CAD, EUR
+            - courtesy ({currency, per_usd}, optional): home-currency figure printed
+              under each USD price ("≈ JPY 2,544"); the caller's rate, echoed back
+            - footer_note (str, optional): appended to the footer reply hint
 
     Returns:
         str: JSON:
         {
           "card_url": str,              # public JPEG URL — send this as the image
           "items": [{"ref": int, "product_id": str, "name": str,
-                      "price": {"amount": float, "currency": str}, "url": str}],
+                      "price": {"amount": float, "currency": str},
+                      "price_note": str | null, "url": str}],
+          "courtesy": {"currency": str, "per_usd": float} | null,  # what was printed, or null
           "unavailable": [str]          # product_ids that failed to load (omitted from card)
         }
 
@@ -126,6 +147,10 @@ async def kapruka_render_options_card(params: RenderOptionsCardInput) -> str:
 
     fetched = await asyncio.gather(*(fetch(p) for p in params.items))
 
+    # Courtesy figures describe a USD charge; on any other card currency the
+    # spec is ignored (and reported back as null so the caller can tell).
+    courtesy = params.courtesy if (params.courtesy and params.currency == "USD") else None
+
     card_items: list[CardItem] = []
     meta: list[dict] = []
     unavailable: list[str] = []
@@ -134,19 +159,24 @@ async def kapruka_render_options_card(params: RenderOptionsCardInput) -> str:
             unavailable.append(p.product_id)
             continue
         price = data["price"]
+        amount = float(price["amount"])
+        cur = str(price.get("currency") or params.currency)
+        note = fmt_courtesy(amount, courtesy.per_usd, courtesy.currency) if (courtesy and cur == "USD") else None
         card_items.append(CardItem(
             ref=p.ref,
             product_id=p.product_id,
             name=str(data.get("name") or p.product_id),
-            price_amount=float(price["amount"]),
-            currency=str(price.get("currency") or params.currency),
+            price_amount=amount,
+            currency=cur,
             image=img,
+            price_note=note,
         ))
         meta.append({
             "ref": p.ref,
             "product_id": p.product_id,
             "name": data.get("name"),
-            "price": {"amount": float(price["amount"]), "currency": price.get("currency") or params.currency},
+            "price": {"amount": amount, "currency": cur},
+            "price_note": note,
             "url": data.get("url"),
         })
 
@@ -155,7 +185,7 @@ async def kapruka_render_options_card(params: RenderOptionsCardInput) -> str:
 
     try:
         # Pillow is sync CPU work — keep the event loop free.
-        name = await asyncio.to_thread(save_card, card_items)
+        name = await asyncio.to_thread(save_card, card_items, params.footer_note or None)
     except Exception as e:
         logger.error("card render failed: %s", e, exc_info=True)
         return f"Error: card rendering failed ({e}). Fall back to a text list with links."
@@ -163,5 +193,6 @@ async def kapruka_render_options_card(params: RenderOptionsCardInput) -> str:
     return json.dumps({
         "card_url": f"{_BASE_URL}/cards/{name}",
         "items": meta,
+        "courtesy": {"currency": courtesy.currency.upper(), "per_usd": courtesy.per_usd} if courtesy else None,
         "unavailable": unavailable,
     }, ensure_ascii=False)
