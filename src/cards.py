@@ -71,11 +71,31 @@ def _font_path(bold: bool) -> str | None:
     return None
 
 
+_warned_no_ttf = False
+
+
 def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    global _warned_no_ttf
     path = _font_path(bold)
     if path:
         return ImageFont.truetype(path, size)
+    if not _warned_no_ttf:
+        _warned_no_ttf = True
+        logger.warning("no TTF font found (install fonts-dejavu-core) — cards use Pillow's default face, which lacks ≈ and •")
     return ImageFont.load_default(size=size)
+
+
+def _has_ttf() -> bool:
+    return _font_path(False) is not None
+
+
+def _safe_text(text: str) -> str:
+    """Pillow's built-in face has no ≈ / • glyphs (they rendered as boxes on
+    the fresh 2026-09-11 box until fonts-dejavu-core was installed): without a
+    TTF, downgrade them to ASCII rather than print tofu on a customer's card."""
+    if _has_ttf():
+        return text
+    return text.replace("≈", "~").replace("•", "|")
 
 
 def _fit_on_white(img: Image.Image, w: int, h: int) -> Image.Image:
@@ -186,7 +206,7 @@ def render_card(items: list[CardItem], footer_note: str | None = None) -> bytes:
         draw.text((x0 + 10, cy + 48), _fmt_price(it.price_amount, it.currency),
                   font=f_price, fill=CAPTION_PRICE)
         if it.price_note:
-            note = _ellipsize(draw, it.price_note.strip(), f_note, CELL_W - 20)
+            note = _ellipsize(draw, _safe_text(it.price_note.strip()), f_note, CELL_W - 20)
             draw.text((x0 + 10, cy + 90), note, font=f_note, fill=CAPTION_NOTE)
 
         # Hairline between cells.
@@ -200,7 +220,7 @@ def render_card(items: list[CardItem], footer_note: str | None = None) -> bytes:
     draw.text((MARGIN + 6, fy + 13), "kapruka.com", font=f_footer, fill=FOOTER_FG)
     hint = _reply_hint([it.ref for it in items])
     if footer_note:
-        hint = f"{hint}  •  {footer_note.strip()}"
+        hint = _safe_text(f"{hint}  •  {footer_note.strip()}")
     hw = draw.textlength(hint, font=f_footer)
     draw.text((width - MARGIN - 6 - hw, fy + 13), hint, font=f_footer, fill=FOOTER_FG)
 

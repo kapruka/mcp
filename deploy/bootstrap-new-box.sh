@@ -45,3 +45,6 @@ systemctl is-active kapruka-mcp; curl -fsS http://127.0.0.1:3200/health; echo
 grep -q 'mcp.kapruka.com {' /etc/caddy/Caddyfile || cat "$STAGE/deploy/Caddyfile.snippet" >> /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && systemctl reload caddy
 echo "INSTALL DONE. Caddy will fetch the LE cert on reload; check: journalctl -u caddy | grep 'certificate obtained'"
+
+# Options-card renderer needs a real TTF (≈ and • glyphs) — Pillow's default face prints boxes.
+sudo apt-get install -y fonts-dejavu-core

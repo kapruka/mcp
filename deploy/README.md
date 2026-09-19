@@ -17,6 +17,7 @@ SSH: `ssh -i ~/.ssh/javalounge_newserver_ed25519 roman@23.111.183.156`
 | venv | `/srv/kapruka-mcp/.venv` (uv-managed CPython 3.12) |
 | Python toolchain + uv cache | `/opt/kapruka-python` — must be outside `/home` (unit has `ProtectHome=true`) |
 | uv binary | `/usr/local/bin/uv` |
+| Card font | `fonts-dejavu-core` (apt) — without it Pillow's default face has no ≈ / • and the options cards print boxes (bit 2026-09-19 on this box) |
 | Unit | `/etc/systemd/system/kapruka-mcp.service` (= `deploy/kapruka-mcp.service`) |
 | Caddy | single `/etc/caddy/Caddyfile`; our vhost = `deploy/Caddyfile.snippet` |
 | Staging copy used by bootstrap | `/home/roman/kapruka-mcp-staging` |
