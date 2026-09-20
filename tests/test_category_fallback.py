@@ -1,11 +1,11 @@
 """Category filter: retry without it instead of reporting an empty catalogue.
 
-Upstream products_search honours only a few category values. Measured against
-production on 2026-09-20: Birthday, Chocolates, Books, Electronics, Fruits and
-Clothing return rows; Cakes, Flowers, Toys, Jewelry, Perfume, Grocery,
-Vouchers, Fashion, Bakery, Hampers and every occasion name return nothing for
-every query — even the value the product itself reports (a cake's own category
-field reads "cakes", and searching that returns nothing).
+`category` is the WEBSITE'S SUBCATEGORY FACET (`subcat=` in
+srilanka_online_search.jsp), not a department name. Verified 2026-09-21:
+'Kapruka Cakes' and 'Fresh Flowers' return 10 of 10 correct products and
+reproduce the site's own result list; 'Cakes', 'Flowers' and most department
+words match nothing. The valid set depends on the query and no API response
+advertises it, so a caller can only guess — hence the fallback.
 
 Over 5 days of live agent traffic, 92 searches carried a category filter and 75
 came back empty: Cakes 40 of 40, Flowers 23 of 23. Until the API is fixed the
@@ -19,8 +19,8 @@ import pytest
 from src.tools import products as products_tool
 from src.tools.products import SearchProductsInput, kapruka_search_products
 
-# Categories upstream actually honours (probed 2026-09-20).
-WORKING = {"birthday", "chocolates", "books", "electronics", "fruits", "clothing"}
+# Facet names upstream honours for a cake/flower query (probed 2026-09-21).
+WORKING = {"kapruka cakes", "fresh flowers", "birthday", "greeting cards", "chocolates"}
 
 
 def _row(pid: str, name: str) -> dict:
@@ -112,8 +112,13 @@ async def test_genuinely_empty_still_reports_empty():
     assert "No products found for 'cake' in category 'Cakes'." in out
 
 
-def test_description_no_longer_recommends_broken_values():
+def test_description_names_the_facet_contract():
     desc = SearchProductsInput.model_fields["category"].description
-    # The old text offered 'Cakes' and 'Flowers' as the examples to copy.
+    # The old text offered 'Cakes' and 'Flowers' as the examples to copy; both
+    # match nothing. The parameter is the website's subcat facet name.
     assert "e.g. 'Birthday', 'Cakes', 'Flowers'" not in desc
-    assert "Chocolates" in desc and "return" in desc
+    assert "subcat" in desc
+    assert "Kapruka Cakes" in desc and "Fresh Flowers" in desc
+    # It must warn that department words do not work and that the set is query-dependent.
+    assert "NOT valid" in desc
+    assert "DEPENDS ON THE QUERY" in desc

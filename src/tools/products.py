@@ -318,13 +318,15 @@ class SearchProductsInput(BaseModel):
     category: Optional[str] = Field(
         default=None,
         description=(
-            "Filter by category name. Case-insensitive. NOTE: upstream honours only a "
-            "few values (measured 2026-09-20: Birthday, Chocolates, Books, Electronics, "
-            "Fruits, Clothing work; Cakes, Flowers, Toys, Jewelry, Perfume, Grocery, "
-            "Vouchers, Fashion, Bakery, Hampers and every other occasion name return "
-            "nothing, even the value the product itself reports). Prefer leaving this "
-            "unset and putting the category word in `q`; when a category filter matches "
-            "nothing this tool retries without it and says so."
+            "Filter by SUBCATEGORY FACET NAME — the same value the website's search uses in "
+            "its `subcat=` parameter and shows in its left sidebar, e.g. 'Kapruka Cakes', "
+            "'Fresh Flowers', 'Birthday', 'Greeting Cards', 'Cake And Flower', "
+            "'Home And Lifestyle', 'Grocery Items'. These are narrower than a department "
+            "and the valid set DEPENDS ON THE QUERY. Department words ('Cakes', 'Flowers', "
+            "'Toys') and most values from kapruka_list_categories are NOT valid here and "
+            "return nothing. When the filter matches nothing this tool retries without it "
+            "and says so, so a wrong value costs relevance, not results. If unsure, leave "
+            "it unset and put the words in `q`."
         ),
     )
     limit: int = Field(
@@ -509,15 +511,20 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
 
     results = _usable(data)
 
-    # CATEGORY FALLBACK (2026-09-20). Upstream products_search honours only a
-    # handful of category values: 'Cakes' and 'Flowers' — the two biggest
-    # departments, and until today two of the three examples in this tool's own
-    # parameter description — return nothing for every query, even when the
-    # product's own category field is exactly that word. Measured over 5 days of
-    # live agent traffic: 92 searches carried a category, 75 came back empty
-    # (Cakes 40/40, Flowers 23/23), each one a customer asking for a cake or
-    # flowers. Until the API is fixed, retry once without the filter rather than
-    # tell the caller the catalogue is empty.
+    # CATEGORY FALLBACK (2026-09-20, diagnosis corrected 2026-09-21).
+    # `category` is the website's SUBCATEGORY FACET (`subcat=` in
+    # srilanka_online_search.jsp), not a department: 'Kapruka Cakes' and
+    # 'Fresh Flowers' work and reproduce the site's own result list exactly,
+    # while 'Cakes'/'Flowers' — until 2026-09-21 two of the three examples in
+    # this tool's parameter description — match nothing. The valid set depends
+    # on the query, and nothing in the API advertises it: the search response
+    # carries no facet list (upstream returns only results, next_cursor,
+    # total_estimate, applied_filters), and kapruka_list_categories returns a
+    # different vocabulary whose 'cakes'/'flowers' entries are not searchable.
+    # Measured over 5 days of live agent traffic: 92 searches carried a
+    # category and 75 came back empty (Cakes 40/40, Flowers 23/23), every one a
+    # customer asking for a cake or flowers. Retry once without the filter so a
+    # wrong facet name costs relevance, never the whole result set.
     category_dropped = False
     if not results and params.category:
         try:
