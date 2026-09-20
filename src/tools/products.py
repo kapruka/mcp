@@ -2,7 +2,9 @@
 
 import base64
 import json
+import logging
 import re
+import time
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -10,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.api.client import KaprukaClient, handle_api_error
 from src.delivery_scope import describe_delivery
 from src.server import mcp
+
+logger = logging.getLogger(__name__)
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -402,6 +406,48 @@ class SearchProductsInput(BaseModel):
         return v
 
 
+# ── price bounds are evaluated in LKR upstream ───────────────────────────────
+# `products_search` converts the PRICES it returns into the requested currency
+# but compares `min_price`/`max_price` against the raw LKR figures. Proven
+# 2026-09-21: q="cake" currency=USD max_price=32 -> "No products found", while
+# max_price=9600 (= USD 32 at ~300/USD) returns cakes priced USD 13.15-31.48,
+# and max_price=100 returns 30-cent greeting cards (LKR 90). Overseas customers
+# are ~62% of this agent's traffic, so every dollar budget they gave was tested
+# against rupee numbers: "a cake under $30" answered "we have none".
+# Until the API compares in the caller's currency, convert here.
+_RATE_TTL_S = 6 * 3600
+_RATE_CACHE: dict[str, tuple[float, float]] = {}
+# Any in-catalogue product works — the ratio is the price list's, not the item's.
+_RATE_ANCHORS = ("CAKE00KA002192", "CAKE00KA001423", "FLOWERS00T2075", "CAKE00KA001535")
+
+
+async def _lkr_per_unit(client, currency: str) -> float | None:
+    """Rupees per 1 unit of `currency`, from Kapruka's own price list. None when
+    it cannot be read — the caller then filters locally instead of guessing."""
+    cur = (currency or "LKR").upper()
+    if cur == "LKR":
+        return 1.0
+    hit = _RATE_CACHE.get(cur)
+    if hit and (time.time() - hit[1]) < _RATE_TTL_S:
+        return hit[0]
+    for pid in _RATE_ANCHORS:
+        try:
+            in_lkr = await client.call("product", product_id=pid, currency="LKR")
+            in_cur = await client.call("product", product_id=pid, currency=cur)
+            a = float((in_lkr.get("price") or {}).get("amount") or 0)
+            b = float((in_cur.get("price") or {}).get("amount") or 0)
+        except Exception:
+            continue
+        if a > 0 and b > 0:
+            rate = a / b
+            if 1.0 < rate < 100000.0:      # sanity: LKR is worth less than any peer
+                _RATE_CACHE[cur] = (rate, time.time())
+                logger.info("price-bound rate %s -> LKR %.2f (anchor %s)", cur, rate, pid)
+                return rate
+    logger.warning("could not derive an LKR rate for %s; filtering price locally", cur)
+    return None
+
+
 @mcp.tool(
     name="kapruka_search_products",
     annotations={
@@ -486,8 +532,29 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
     if needs_overfetch:
         upstream_limit = min(params.limit * 3, 50)
 
+    client = KaprukaClient()
+
+    # Price bounds: upstream compares them in LKR (see _lkr_per_unit). Convert,
+    # and if the rate cannot be read, send no bounds and filter locally instead
+    # — a bound the server would misread is worse than one we apply ourselves.
+    min_p, max_p = params.min_price, params.max_price
+    up_min, up_max = min_p, max_p
+    price_rate = 1.0
+    price_local_only = False
+    if (min_p is not None or max_p is not None) and (params.currency or "LKR").upper() != "LKR":
+        rate = await _lkr_per_unit(client, params.currency)
+        if rate:
+            price_rate = rate
+            up_min = min_p * rate if min_p is not None else None
+            up_max = max_p * rate if max_p is not None else None
+        else:
+            up_min = up_max = None
+            price_local_only = True
+        # Locally-bounded searches need headroom, since upstream is unfiltered.
+        if price_local_only:
+            upstream_limit = min(max(upstream_limit, params.limit) * 4, 50)
+
     try:
-        client = KaprukaClient()
         data = await client.call(
             "products_search",
             q=params.q,
@@ -495,18 +562,36 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
             category=params.category,
             cursor=upstream_cursor,
             currency=params.currency,
-            min_price=params.min_price,
-            max_price=params.max_price,
+            min_price=up_min,
+            max_price=up_max,
             in_stock_only="true" if params.in_stock_only else None,
             sort=params.sort if params.sort != "relevance" else None,
         )
     except Exception as e:
         return handle_api_error(e)
 
+    def _in_budget(row: dict) -> bool:
+        """The returned price is already in the caller's currency, so this is the
+        authoritative check — it also catches rounding in the converted bound."""
+        amt = (row.get("price") or {}).get("amount")
+        if amt is None:
+            return True
+        try:
+            amt = float(amt)
+        except (TypeError, ValueError):
+            return True
+        if min_p is not None and amt < float(min_p) - 0.005:
+            return False
+        if max_p is not None and amt > float(max_p) + 0.005:
+            return False
+        return True
+
     def _usable(payload: dict) -> list[dict]:
         rows: list[dict] = payload.get("results", [])
         if not params.include_stubs:
             rows = [r for r in rows if not _is_category_stub(r.get("id", ""))]
+        if min_p is not None or max_p is not None:
+            rows = [r for r in rows if _in_budget(r)]
         return rows[: params.limit]
 
     results = _usable(data)
@@ -534,8 +619,8 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
                 limit=upstream_limit,
                 cursor=upstream_cursor,
                 currency=params.currency,
-                min_price=params.min_price,
-                max_price=params.max_price,
+                min_price=up_min,
+                max_price=up_max,
                 in_stock_only="true" if params.in_stock_only else None,
                 sort=params.sort if params.sort != "relevance" else None,
             )
@@ -557,6 +642,9 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
                 "next_cursor": next_cursor,
                 "applied_filters": data.get("applied_filters", {}),
                 **({"category_filter_dropped": params.category} if category_dropped else {}),
+                **({"price_bounds_converted_to_lkr": round(price_rate, 4)}
+                   if price_rate != 1.0 else {}),
+                **({"price_filtered_locally": True} if price_local_only else {}),
             },
             indent=2,
             ensure_ascii=False,
