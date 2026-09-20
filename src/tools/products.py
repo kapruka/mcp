@@ -317,7 +317,15 @@ class SearchProductsInput(BaseModel):
     )
     category: Optional[str] = Field(
         default=None,
-        description="Filter by category name (e.g. 'Birthday', 'Cakes', 'Flowers'). Case-insensitive.",
+        description=(
+            "Filter by category name. Case-insensitive. NOTE: upstream honours only a "
+            "few values (measured 2026-09-20: Birthday, Chocolates, Books, Electronics, "
+            "Fruits, Clothing work; Cakes, Flowers, Toys, Jewelry, Perfume, Grocery, "
+            "Vouchers, Fashion, Bakery, Hampers and every other occasion name return "
+            "nothing, even the value the product itself reports). Prefer leaving this "
+            "unset and putting the category word in `q`; when a category filter matches "
+            "nothing this tool retries without it and says so."
+        ),
     )
     limit: int = Field(
         default=10,
@@ -493,13 +501,41 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
     except Exception as e:
         return handle_api_error(e)
 
-    results: list[dict] = data.get("results", [])
+    def _usable(payload: dict) -> list[dict]:
+        rows: list[dict] = payload.get("results", [])
+        if not params.include_stubs:
+            rows = [r for r in rows if not _is_category_stub(r.get("id", ""))]
+        return rows[: params.limit]
 
-    if not params.include_stubs:
-        results = [r for r in results if not _is_category_stub(r.get("id", ""))]
+    results = _usable(data)
 
-    # Trim over-fetch back down to what the caller asked for.
-    results = results[: params.limit]
+    # CATEGORY FALLBACK (2026-09-20). Upstream products_search honours only a
+    # handful of category values: 'Cakes' and 'Flowers' — the two biggest
+    # departments, and until today two of the three examples in this tool's own
+    # parameter description — return nothing for every query, even when the
+    # product's own category field is exactly that word. Measured over 5 days of
+    # live agent traffic: 92 searches carried a category, 75 came back empty
+    # (Cakes 40/40, Flowers 23/23), each one a customer asking for a cake or
+    # flowers. Until the API is fixed, retry once without the filter rather than
+    # tell the caller the catalogue is empty.
+    category_dropped = False
+    if not results and params.category:
+        try:
+            data = await client.call(
+                "products_search",
+                q=params.q,
+                limit=upstream_limit,
+                cursor=upstream_cursor,
+                currency=params.currency,
+                min_price=params.min_price,
+                max_price=params.max_price,
+                in_stock_only="true" if params.in_stock_only else None,
+                sort=params.sort if params.sort != "relevance" else None,
+            )
+        except Exception as e:
+            return handle_api_error(e)
+        results = _usable(data)
+        category_dropped = bool(results)
 
     if not results:
         suffix = f" in category '{params.category}'" if params.category else ""
@@ -513,18 +549,25 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
                 "results": results,
                 "next_cursor": next_cursor,
                 "applied_filters": data.get("applied_filters", {}),
+                **({"category_filter_dropped": params.category} if category_dropped else {}),
             },
             indent=2,
             ensure_ascii=False,
         )
 
     # ── Markdown format
-    cat_label = f" in **{params.category}**" if params.category else ""
+    cat_label = "" if category_dropped else (f" in **{params.category}**" if params.category else "")
     lines: list[str] = [
         f"## Kapruka search: \"{params.q}\"{cat_label}",
         f"Showing {len(results)} results ({params.currency})",
-        "",
     ]
+    if category_dropped:
+        lines.append(
+            f"_Nothing matched in category '{params.category}', so the category filter was "
+            f"dropped and these are results for \"{params.q}\" across the catalogue. "
+            f"Do not re-send that category._"
+        )
+    lines.append("")
 
     for i, r in enumerate(results, 1):
         rid = r.get("id", "")
