@@ -416,6 +416,12 @@ class SearchProductsInput(BaseModel):
 # against rupee numbers: "a cake under $30" answered "we have none".
 # Until the API compares in the caller's currency, convert here.
 _RATE_TTL_S = 6 * 3600
+# A currency with no Kapruka price list (CAD, measured 2026-09-21) fails every
+# anchor, which is 8 upstream calls. Without remembering that, each bounded
+# search in that currency pays them again — and this API throttles on novel
+# queries PER SESSION, so the retries are what trips the throttle. Remember
+# the failure too, briefly, so a price list added later is still picked up.
+_RATE_FAIL_TTL_S = 15 * 60
 _RATE_CACHE: dict[str, tuple[float, float]] = {}
 # Any in-catalogue product works — the ratio is the price list's, not the item's.
 _RATE_ANCHORS = ("CAKE00KA002192", "CAKE00KA001423", "FLOWERS00T2075", "CAKE00KA001535")
@@ -428,8 +434,11 @@ async def _lkr_per_unit(client, currency: str) -> float | None:
     if cur == "LKR":
         return 1.0
     hit = _RATE_CACHE.get(cur)
-    if hit and (time.time() - hit[1]) < _RATE_TTL_S:
-        return hit[0]
+    if hit:
+        rate, at = hit
+        ttl = _RATE_TTL_S if rate else _RATE_FAIL_TTL_S
+        if (time.time() - at) < ttl:
+            return rate or None
     for pid in _RATE_ANCHORS:
         try:
             in_lkr = await client.call("product", product_id=pid, currency="LKR")
@@ -444,6 +453,7 @@ async def _lkr_per_unit(client, currency: str) -> float | None:
                 _RATE_CACHE[cur] = (rate, time.time())
                 logger.info("price-bound rate %s -> LKR %.2f (anchor %s)", cur, rate, pid)
                 return rate
+    _RATE_CACHE[cur] = (0.0, time.time())
     logger.warning("could not derive an LKR rate for %s; filtering price locally", cur)
     return None
 
