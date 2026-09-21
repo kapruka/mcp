@@ -11,7 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from src.api.client import KaprukaClient, handle_api_error
 from src.server import mcp
 
-SUPPORTED_CURRENCIES = ["LKR", "USD", "GBP", "AUD", "CAD", "EUR"]
+# The five the Kapruka API actually prices. CAD was advertised here until
+# 2026-09-21 and had never been supported: the API answers
+# `400 invalid_currency`, as it does for JPY, SGD, AED and INR.
+SUPPORTED_CURRENCIES = ["LKR", "USD", "GBP", "AUD", "EUR"]
 
 # All "today" checks anchor on Sri Lanka time, not the MCP host clock.
 _LK_TZ = timezone(timedelta(hours=5, minutes=30))
@@ -280,7 +283,7 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
             - delivery (Delivery): address, city (must be Kapruka-deliverable — use kapruka_list_delivery_cities), location_type (house/apartment/office/other, default house), date (YYYY-MM-DD, today-or-future Asia/Colombo), optional instructions
             - sender (Sender): name + anonymous flag
             - gift_message (Optional[str]): Up to 300 chars
-            - currency (str): LKR (default), USD, GBP, AUD, CAD, EUR
+            - currency (str): LKR (default), USD, GBP, AUD, EUR
             - response_format (str): 'markdown' (default) or 'json'
 
     Returns:

@@ -196,22 +196,23 @@ async def test_markdown_path_also_respects_the_budget():
 
 @pytest.mark.asyncio
 async def test_a_failed_rate_lookup_is_remembered():
-    """CAD has no Kapruka price list. Each attempt costs up to 8 upstream calls,
+    """A currency whose price list cannot be read costs up to 8 upstream calls
+    per attempt,
     and this API throttles on novel queries per session, so repeating them is
     what trips the throttle."""
     _Client.rate_available = False
-    await _run(currency="CAD", max_price=28, response_format="json")
+    await _run(currency="AUD", max_price=28, response_format="json")
     first = _Client.anchor_calls
     assert first > 0
-    await _run(currency="CAD", max_price=12, response_format="json")
+    await _run(currency="AUD", max_price=12, response_format="json")
     assert _Client.anchor_calls == first, "the failure must be cached, not retried"
 
 
 @pytest.mark.asyncio
 async def test_a_remembered_failure_still_honours_the_budget():
     _Client.rate_available = False
-    await _run(currency="CAD", max_price=28, response_format="json")
-    payload = json.loads(await _run(currency="CAD", max_price=28, response_format="json"))
+    await _run(currency="AUD", max_price=28, response_format="json")
+    payload = json.loads(await _run(currency="AUD", max_price=28, response_format="json"))
     assert payload.get("price_filtered_locally") is True
     assert all(r["price"]["amount"] <= 28 for r in payload["results"])
 
@@ -219,10 +220,10 @@ async def test_a_remembered_failure_still_honours_the_budget():
 @pytest.mark.asyncio
 async def test_a_remembered_failure_expires():
     _Client.rate_available = False
-    await _run(currency="CAD", max_price=28, response_format="json")
+    await _run(currency="AUD", max_price=28, response_format="json")
     first = _Client.anchor_calls
-    products_tool._RATE_CACHE["CAD"] = (0.0, time.time() - products_tool._RATE_FAIL_TTL_S - 1)
+    products_tool._RATE_CACHE["AUD"] = (0.0, time.time() - products_tool._RATE_FAIL_TTL_S - 1)
     _Client.rate_available = True
-    payload = json.loads(await _run(currency="CAD", max_price=28, response_format="json"))
+    payload = json.loads(await _run(currency="AUD", max_price=28, response_format="json"))
     assert _Client.anchor_calls > first, "a price list added later must be picked up"
     assert payload["price_bounds_converted_to_lkr"] == pytest.approx(RATE, rel=0.01)

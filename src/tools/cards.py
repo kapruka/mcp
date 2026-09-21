@@ -114,7 +114,7 @@ async def kapruka_render_options_card(params: RenderOptionsCardInput) -> str:
     Args:
         params (RenderOptionsCardInput):
             - items (list[CardProduct]): 1-4 of {product_id, ref}
-            - currency (str): LKR (default), USD, GBP, AUD, CAD, EUR
+            - currency (str): LKR (default), USD, GBP, AUD, EUR
             - courtesy ({currency, per_usd}, optional): home-currency figure printed
               under each USD price ("≈ JPY 2,544"); the caller's rate, echoed back
             - footer_note (str, optional): appended to the footer reply hint

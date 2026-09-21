@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
-SUPPORTED_CURRENCIES = ["LKR", "USD", "GBP", "AUD", "CAD", "EUR"]
+# The five the Kapruka API actually prices. CAD was advertised here until
+# 2026-09-21 and had never been supported: the API answers
+# `400 invalid_currency`, as it does for JPY, SGD, AED and INR.
+SUPPORTED_CURRENCIES = ["LKR", "USD", "GBP", "AUD", "EUR"]
 
 # ── Anti-scrape constraints ──────────────────────────────────────────────────
 # Hard cap on how many cursor-paginated pages a single query can traverse.
@@ -187,7 +190,7 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     Args:
         params (GetProductInput):
             - product_id (str): Kapruka product ID (e.g. 'cakeXX000000')
-            - currency (str): Price currency — LKR (default), USD, GBP, AUD, CAD, EUR
+            - currency (str): Price currency — LKR (default), USD, GBP, AUD, EUR
             - type (Optional[str]): Optional type hint (e.g. 'specialgifts')
             - response_format (str): 'markdown' (default) or 'json'
 
@@ -416,8 +419,8 @@ class SearchProductsInput(BaseModel):
 # against rupee numbers: "a cake under $30" answered "we have none".
 # Until the API compares in the caller's currency, convert here.
 _RATE_TTL_S = 6 * 3600
-# A currency with no Kapruka price list (CAD, measured 2026-09-21) fails every
-# anchor, which is 8 upstream calls. Without remembering that, each bounded
+# A currency whose Kapruka price list is missing or broken fails every anchor,
+# which is 8 upstream calls. Without remembering that, each bounded
 # search in that currency pays them again — and this API throttles on novel
 # queries PER SESSION, so the retries are what trips the throttle. Remember
 # the failure too, briefly, so a price list added later is still picked up.
@@ -493,7 +496,7 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
             - category (Optional[str]): Category filter (e.g. 'Birthday', 'Flowers')
             - limit (int): Results per page, 1–50 (default 10)
             - cursor (Optional[str]): Pagination cursor from previous response
-            - currency (str): LKR (default), USD, GBP, AUD, CAD, EUR
+            - currency (str): LKR (default), USD, GBP, AUD, EUR
             - min_price (Optional[float]): Min price (inclusive) in the requested currency
             - max_price (Optional[float]): Max price (inclusive) in the requested currency
             - in_stock_only (bool): Restrict to in-stock items (default false)
