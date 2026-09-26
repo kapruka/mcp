@@ -1,144 +1,114 @@
-# Brief for the Afzal agent session — what the API gets wrong and how to sell around it
+# Brief for the Afzal agent — Kapruka MCP v0.5.0 (2026-09-26)
 
-**From the MCP side, 2026-09-21.** We spent today proving the upstream faults at
-the API level (`docs/UPSTREAM_API_FAULTS.md`) and asking Kapruka to fix them
-(`docs/KAPRUKA_API_FIX_REQUEST.md`). Until they do, some of it has to be handled
-in how the agent searches and what it says. This is that list.
-
-Three things first, so you don't duplicate work:
-
-1. **The MCP already compensates** for price bounds in foreign currencies, wrong
-   category names, and CATSYM navigation rows. Do not add prompt rules for those.
-2. **Three things we told you were broken are not** — see "don't build these" at
-   the bottom. They were our diagnosis errors and we've published corrections.
-3. **One thing changed in the tool contract today** (v0.4.6): CAD is gone.
+**Replaces the 2026-09-21 brief.** Kapruka fixed most of the API faults we
+reported, it is live on production, and the MCP has been updated to match.
+Several rules from the old brief are now wrong — this is the current set.
 
 ---
 
-## The one rule that fixes the most
+## What changed for you
 
-**Search the head noun alone, then check the results actually contain it.**
-
-The API matches on *any* single token, including fragments inside unrelated
-words, with no preference for rows matching the whole query. Extra words do not
-narrow a search — they add wrong results:
-
-```
-q="Largactil"        -> 0 results          (correct: we don't stock it)
-q="Largactil 50mg"   -> 87 results, all MG car parts
-```
-
-So:
-- Send the noun the customer wants (`walker`, `gift card`, `ice cream`), not the
-  full sentence they typed.
-- **Before showing anything, check the head noun appears in the product name.**
-  If it doesn't, we don't have it — say so. "medipedic walker" returns two
-  bottles of Johnnie Walker above the actual medical walker; "Apple gift card"
-  returns an iPhone and an apple juice; "staple gun" returns a toy gun.
-- Never treat a non-empty result as proof the item exists.
-
-This one behaviour change is worth more than everything else on this page.
+| Area | Before (v0.4.x) | Now (v0.5.0) |
+|---|---|---|
+| **Category filter** | `Cakes` silently matched nothing; the MCP retried without it | Every search lists its valid facet names. A wrong name is dropped, you get results anyway, **plus the list of names that do work** |
+| **Foreign-currency budgets** | MCP converted to rupees behind the scenes | The API bounds in your currency natively. Pass the customer's own number in their own currency |
+| **Sinhala** | Always returned the same junk list (liquor, toys, roses, shoes) | Works for products that have a Sinhala name (`අටපිරිකර` → the atapirikara sets). Others return loosely related results |
+| **Category shortcut rows** | Filtered by the MCP | Gone from the API entirely |
+| **Same-day delivery** | Offered all evening | Correct, and item-aware when you pass `product_id` |
+| **Relevance** | Any single word matched | **Unchanged** — still your job (see rule 1) |
 
 ---
 
-## Sinhala: transliterate before you search
+## Rules
 
-A Sinhala query does not return "no results" — it returns **the same four
-unrelated rows every time**, claiming 90 matches:
+### 1. Search the head noun, then check the names contain it — still the most important rule
 
-```
-q="අටපිරිකර"  (Buddhist alms goods) -> See Top Selling Liquor Products,
-                                        Plush Toys, Roses, Shoes
-q="atapirikara"                      -> the correct PIRIKARA products
-```
+Kapruka deferred this fix. The API still matches any one word, and it strips
+digits before searching, so `Largactil 50mg` is searched as `Largactil mg` and
+returns MG car parts. `medipedic walker` now puts a baby-walker belt first.
 
-`කිරිබත්` (milk rice) and `මල්` (flowers) return that identical liquor-first
-list. Rules:
+- Send the thing the customer wants (`walker`, `gift card`, `ice cream`), not
+  their whole sentence. Don't put quantities or strengths (`50mg`, `2kg`) in `q`.
+- **Before presenting results, check the product names contain the head noun.**
+  If none do, we don't have it — say so.
+- A non-empty result is not proof the item exists.
 
-- Transliterate any Sinhala product word to Latin script before searching.
-- Treat a result set that is all "See Top Selling …" rows as **no match**, not as
-  results. That is the fallback list, not the catalogue.
-- Offering whisky to someone asking for alms goods is the specific failure to
-  avoid.
+### 2. Categories: search first, then narrow with a facet the search gave you
 
----
+Every search now ends with a line like:
 
-## Category: prefer not to send one
+> _Narrow with `category` (facets for this search): Kapruka Cakes (292),
+> Greeting Cards (244), Birthday (92), …_
 
-`category` is the website's subcategory facet, not a department. `Cakes` and
-`Flowers` match nothing; `Kapruka Cakes` and `Fresh Flowers` work. Nothing in the
-API publishes the valid names, and `Electronic` — a name Kapruka's own categories
-endpoint returns, with a product count — matches nothing at all.
+(In `response_format: "json"`: `facets.categories`, a list of `{name, count}`.)
 
-- **Default to omitting `category`.** The MCP retries without it when a filtered
-  search comes back empty, so a wrong facet costs relevance, not the answer — but
-  the retry costs a round trip and the first result page is the one the customer
-  sees.
-- If you do send one, use a name you have seen return rows. Known good:
-  `Kapruka Cakes`, `Fresh Flowers`, `Books`, `Chocolates`, `Fruits`.
-- In `response_format: "json"`, the MCP sets `category_filter_dropped` when it had
-  to retry. If you see that, the facet name was wrong — don't reuse it.
+- To narrow, re-search with one of **those** names — e.g. `category: "Kapruka Cakes"`
+  for cakes only. Case and spacing don't matter.
+- **Never** use department words (`Cakes`, `Flowers`) or names from
+  `kapruka_list_categories` — that tool is the site's navigation, a different
+  vocabulary (`Electronic` there vs `Electronics` in search). Use it only to send a
+  customer a browse link.
+- If you send a wrong name, the MCP drops it, still returns results, and says:
+  _"'Cakes' is not a category for this search … Categories that do exist: Kapruka
+  Cakes, …  Do not re-send 'Cakes'."_ In JSON: `category_filter_dropped` and
+  `valid_categories`. Pick from that list next time.
+- A real facet that returns **no products** now means genuinely none (e.g. no
+  cakes under that budget). The MCP no longer silently widens it to other
+  categories — tell the customer, or relax the budget.
 
----
+### 3. Money
 
-## Money
+- **Pass the customer's budget exactly as they said it**: `currency: "USD",
+  max_price: 30` means thirty dollars. Don't convert to rupees — that was never
+  right, and now it would search "under $8,100".
+- Supported currencies: **LKR, USD, GBP, AUD, EUR**. For Canadian customers,
+  quote USD and say so.
+- **Bank deposit is for LKR orders only.** Kapruka now refuses bank-deposit
+  details for a USD order (`400 invalid_currency`). USD/overseas customers pay by
+  card through the checkout link.
+- `total_estimate` is now an honest count of index hits — but because of rule 1
+  those hits include one-word matches. Still don't say "we have 700 options".
 
-- **Foreign-currency budgets now work.** Pass the customer's own currency and
-  their own numbers — `currency: "USD", max_price: 30` means thirty dollars. The
-  MCP converts the bound before it reaches the API and re-checks every row it
-  returns. **Do not convert to rupees yourself**; that would double-convert.
-- **Supported currencies are LKR, USD, GBP, AUD, EUR.** CAD was removed from the
-  tools today — it had never worked; the API answers `invalid_currency`. Also
-  rejected: JPY, SGD, AED, INR. For a Canadian customer, quote USD and say so.
-- **Never quote a result count.** `total_estimate` is not a count — it caps at
-  100 and returns a constant 90 for junk queries. "We have 90 options" is a
-  sentence to never say.
+### 4. Delivery dates
 
----
+- Once an item is chosen, **always pass `product_id` to `kapruka_check_delivery`**.
+  It now applies that item's own same-day rule: restaurant/vendor food can go
+  today until late afternoon; ordinary items go next day; ordinary same-day is
+  only possible early in the morning near Colombo. A check without `product_id`
+  can give a different answer.
+- When `available` is false, **offer `next_available_date`**. Don't read meaning
+  into the `reason` text — it's the website's wording and often says "slots are
+  full" when the real cause is the cutoff time.
 
-## When a tool call fails
+### 5. Sinhala
 
-A tool result whose text starts with `Error` is a **failure**, not information.
-The MCP still returns most upstream failures as ordinary text rather than a
-flagged error, so it is easy to read one as content.
+- Sinhala search now works for products that have a Sinhala name recorded
+  (`අටපිරිකර` finds the atapirikara sets). Many products don't have one yet.
+- So: try the Sinhala word; **if the results don't contain what was asked for,
+  retry with the transliteration** (`atapirikara`, `kiribath`). Rule 1 applies —
+  `කිරිබත්` currently returns cut vegetables and cupcake moulds.
 
-- Never relay an `Error …` string to the customer.
-- Never treat it as "we have none of those" — it means we don't know.
-- Retry once; if it fails again, tell the customer you're having trouble looking
-  it up and offer to come back to them.
+### 6. When a tool fails
 
-(We know this is ours to fix properly. It changes live behaviour for your agent,
-so we're not shipping it without a decision.)
-
----
-
-## Don't build these — we were wrong about them
-
-Corrections we published today, so nobody writes a prompt rule for a fault that
-isn't there:
-
-| We said | Actually |
-|---|---|
-| Long phrases return nothing | `happy birthday ribbon cake for boy teenage` returns three correct cakes. The old failures almost certainly also carried `category=Cakes`. |
-| No fuzzy matching on near-miss titles | `Mother Touch` and `Mothers Touch` both return rows. What they return is off-target — that's the head-noun problem above, not a missing fuzzy matcher. |
-| Brand names aren't indexed | `Nawaloka` returns the right vouchers. The other brand misses we couldn't substantiate. |
-| Failures arrive as HTTP 200 from Kapruka | Kapruka's statuses are correct (400/404 with clean envelopes). The 200s are ours. |
+A tool result starting with `Error` is a failure, not information. Don't relay it,
+don't treat it as "we have none". Retry once, then tell the customer you're having
+trouble and will come back.
 
 ---
 
-## What we're waiting on Kapruka for
+## Rules from the old brief that no longer apply
 
-Handed to their dev team today with a 13-check acceptance script
-(`docs/kapruka_api_acceptance.sh`, currently 0/13 passing):
+- ~~"Default to omitting `category`"~~ — now search first, then narrow with a
+  listed facet.
+- ~~"Transliterate Sinhala before you search"~~ — try Sinhala first, fall back to
+  transliteration.
+- ~~"Treat an all-'See Top Selling…' result as no match"~~ — those rows no longer
+  appear.
+- ~~`price_bounds_converted_to_lkr` / `price_filtered_locally` in JSON~~ — removed;
+  there is no conversion any more.
+- ~~"`total_estimate` is a constant 90 for junk"~~ — it's a real count now (see 3).
 
-price bounds in the caller's currency · a real answer to an unknown category ·
-**the facet list in the search response** · ranking on all query tokens ·
-Sinhala in the index · navigation rows out of product search · a truthful
-`total_estimate`.
+## Still waiting on Kapruka
 
-The facet list is the one to push for. With the right facet, "birthday cake"
-returns 10 correct cakes out of 10; without it, 2 out of 7.
-
-Separately flagged to them as needing their own test environment: order quantity
-being dropped (`#PRICEMISMATCH`), the same-day delivery hour branch, and bank
-deposits for USD orders priced at 140 LKR/USD when their own API implies 269.95.
+Relevance (rule 1) and wider Sinhala coverage. When those land, rules 1 and 5
+get simpler and we'll send an update.
