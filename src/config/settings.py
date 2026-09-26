@@ -42,6 +42,16 @@ class Settings:
     custom_cake_trusted_ips: list[str] = _csv(
         "CUSTOM_CAKE_TRUSTED_IPS", _csv("RATE_LIMIT_EXEMPT_IPS", [])
     )
+    # Visual search (Eagle's caption/embedding search). A PRIVATE tool: hidden
+    # from tools/list and callable only from these IPs (default: the trusted
+    # tier, i.e. the eagle box). Additional to Doofinder search, never a
+    # replacement — kapruka_search_products does not use any of this.
+    eagle_vs_url: str = os.getenv("EAGLE_VS_URL", "")
+    eagle_vs_api_key: str = os.getenv("EAGLE_VS_API_KEY", "")
+    eagle_vs_timeout: float = float(os.getenv("EAGLE_VS_TIMEOUT", "5"))
+    visual_search_trusted_ips: list[str] = _csv(
+        "VISUAL_SEARCH_TRUSTED_IPS", _csv("RATE_LIMIT_EXEMPT_IPS", [])
+    )
     # Cap for images fetched on behalf of the agent (brief: 5 MB before base64).
     custom_cake_image_max_bytes: int = int(
         os.getenv("CUSTOM_CAKE_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))

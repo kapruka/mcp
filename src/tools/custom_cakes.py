@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from src.api.client import KaprukaClient, handle_api_error
 from src.config.settings import settings
+from src.private_access import is_trusted_caller
 from src.server import mcp
 
 logger = logging.getLogger(__name__)
@@ -47,41 +48,10 @@ _ACCESS_DENIED = (
 # ── Closed-MCP gate ──────────────────────────────────────────────────────────
 
 
-def _client_ip_from_request(request) -> str:
-    """CF-Connecting-IP > X-Real-IP > XFF[0] > peer — same precedence as the
-    limiters. The app only listens on 127.0.0.1 behind local Caddy, so the
-    headers are trustworthy."""
-    if request is None:
-        return "unknown"
-    h = request.headers
-    for name in ("cf-connecting-ip", "x-real-ip"):
-        v = (h.get(name) or "").strip()
-        if v:
-            return v
-    xff = (h.get("x-forwarded-for") or "").split(",")[0].strip()
-    if xff:
-        return xff
-    client = getattr(request, "client", None)
-    return client.host if client and client.host else "unknown"
-
-
 def _check_access(ctx: Context | None) -> str | None:
-    """Return an error string if the caller is not a trusted first-party IP.
-
-    Fails closed: no trusted IPs configured -> nobody can call these tools.
-    """
-    allowed = set(settings.custom_cake_trusted_ips)
-    if not allowed:
-        return _ACCESS_DENIED
-    request = None
-    try:
-        request = ctx.request_context.request if ctx is not None else None
-    except Exception:  # no request context (stdio transport, unit tests)
-        request = None
-    ip = _client_ip_from_request(request)
-    if ip in allowed:
+    """Return an error string if the caller is not a trusted first-party IP."""
+    if is_trusted_caller(ctx, settings.custom_cake_trusted_ips, "custom_cake"):
         return None
-    logger.info("custom_cake: denied ip=%s", ip)
     return _ACCESS_DENIED
 
 
@@ -223,7 +193,7 @@ async def kapruka_custom_cake_options(params: CustomCakeOptionsInput, ctx: Conte
         return (
             "## Custom cakes are currently unavailable\n"
             "The custom cake service is switched off right now. Offer a cake from "
-            "the catalogue instead (kapruka_search_products, category 'Cakes')."
+            "the catalogue instead (kapruka_search_products, category 'Kapruka Cakes')."
         )
     flavours = ", ".join(
         f"{f.get('label')} (`{f.get('value')}`)" for f in data.get("flavours", []) if isinstance(f, dict)
