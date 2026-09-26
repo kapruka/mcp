@@ -88,9 +88,13 @@ class ListCategoriesInput(BaseModel):
 async def kapruka_list_categories(params: ListCategoriesInput) -> str:
     """List top-level Kapruka product categories by name with browse URLs.
 
-    Returns category names (usable as the `category` filter on kapruka_search_products)
-    plus the public Kapruka.com URL for each category landing page — useful for shopping
-    agents that want to send users directly to a category to browse. Internal IDs and
+    Returns the site's NAVIGATION categories plus the public Kapruka.com URL for each
+    category landing page — useful for sending a customer to a category to browse.
+
+    These names are NOT search filters. kapruka_search_products filters on search
+    facets, a different vocabulary (e.g. navigation 'Electronic' vs facet 'Electronics',
+    'Cakes' vs 'Kapruka Cakes'); every search response lists its valid facet names
+    under facets.categories. Use those for `category`, never these. Internal IDs and
     product counts are not exposed. Results are cached for 30 minutes server-side.
 
     Args:

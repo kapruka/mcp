@@ -4,8 +4,9 @@ import base64
 import json
 import logging
 import re
-import time
 from typing import Optional
+
+import httpx
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -325,15 +326,15 @@ class SearchProductsInput(BaseModel):
     category: Optional[str] = Field(
         default=None,
         description=(
-            "Filter by SUBCATEGORY FACET NAME — the same value the website's search uses in "
-            "its `subcat=` parameter and shows in its left sidebar, e.g. 'Kapruka Cakes', "
-            "'Fresh Flowers', 'Birthday', 'Greeting Cards', 'Cake And Flower', "
-            "'Home And Lifestyle', 'Grocery Items'. These are narrower than a department "
-            "and the valid set DEPENDS ON THE QUERY. Department words ('Cakes', 'Flowers', "
-            "'Toys') and most values from kapruka_list_categories are NOT valid here and "
-            "return nothing. When the filter matches nothing this tool retries without it "
-            "and says so, so a wrong value costs relevance, not results. If unsure, leave "
-            "it unset and put the words in `q`."
+            "Filter by a SEARCH FACET name. Every search response lists the valid "
+            "ones for its words under facets.categories (e.g. 'Kapruka Cakes', "
+            "'Fresh Flowers', 'Electronics', 'Mobile Phones', 'Greeting Cards') — "
+            "search once without a category, then narrow with one of those names. "
+            "Department words ('Cakes', 'Flowers') and names from "
+            "kapruka_list_categories (the site's navigation, a different vocabulary) "
+            "are NOT facet names. Case and spacing don't matter. A name that isn't a "
+            "facet for this query is dropped: you get results without it plus the "
+            "list of valid names."
         ),
     )
     limit: int = Field(
@@ -373,7 +374,10 @@ class SearchProductsInput(BaseModel):
     )
     include_stubs: bool = Field(
         default=False,
-        description="If false (default), category landing pages (CATSYM entries, price=0) are filtered out.",
+        description=(
+            "Deprecated, has no effect. Kept so existing callers don't break: since "
+            "2026-09-26 the API never returns category landing pages from a search."
+        ),
     )
     response_format: str = Field(
         default="markdown",
@@ -409,56 +413,45 @@ class SearchProductsInput(BaseModel):
         return v
 
 
-# ── price bounds are evaluated in LKR upstream ───────────────────────────────
-# `products_search` converts the PRICES it returns into the requested currency
-# but compares `min_price`/`max_price` against the raw LKR figures. Proven
-# 2026-09-21: q="cake" currency=USD max_price=32 -> "No products found", while
-# max_price=9600 (= USD 32 at ~300/USD) returns cakes priced USD 13.15-31.48,
-# and max_price=100 returns 30-cent greeting cards (LKR 90). Overseas customers
-# are ~62% of this agent's traffic, so every dollar budget they gave was tested
-# against rupee numbers: "a cake under $30" answered "we have none".
-# Until the API compares in the caller's currency, convert here.
-_RATE_TTL_S = 6 * 3600
-# A currency whose Kapruka price list is missing or broken fails every anchor,
-# which is 8 upstream calls. Without remembering that, each bounded
-# search in that currency pays them again — and this API throttles on novel
-# queries PER SESSION, so the retries are what trips the throttle. Remember
-# the failure too, briefly, so a price list added later is still picked up.
-_RATE_FAIL_TTL_S = 15 * 60
-_RATE_CACHE: dict[str, tuple[float, float]] = {}
-# Any in-catalogue product works — the ratio is the price list's, not the item's.
-_RATE_ANCHORS = ("CAKE00KA002192", "CAKE00KA001423", "FLOWERS00T2075", "CAKE00KA001535")
+# ── search helpers ───────────────────────────────────────────────────────────
 
 
-async def _lkr_per_unit(client, currency: str) -> float | None:
-    """Rupees per 1 unit of `currency`, from Kapruka's own price list. None when
-    it cannot be read — the caller then filters locally instead of guessing."""
-    cur = (currency or "LKR").upper()
-    if cur == "LKR":
-        return 1.0
-    hit = _RATE_CACHE.get(cur)
-    if hit:
-        rate, at = hit
-        ttl = _RATE_TTL_S if rate else _RATE_FAIL_TTL_S
-        if (time.time() - at) < ttl:
-            return rate or None
-    for pid in _RATE_ANCHORS:
-        try:
-            in_lkr = await client.call("product", product_id=pid, currency="LKR")
-            in_cur = await client.call("product", product_id=pid, currency=cur)
-            a = float((in_lkr.get("price") or {}).get("amount") or 0)
-            b = float((in_cur.get("price") or {}).get("amount") or 0)
-        except Exception:
-            continue
-        if a > 0 and b > 0:
-            rate = a / b
-            if 1.0 < rate < 100000.0:      # sanity: LKR is worth less than any peer
-                _RATE_CACHE[cur] = (rate, time.time())
-                logger.info("price-bound rate %s -> LKR %.2f (anchor %s)", cur, rate, pid)
-                return rate
-    _RATE_CACHE[cur] = (0.0, time.time())
-    logger.warning("could not derive an LKR rate for %s; filtering price locally", cur)
-    return None
+def _error_envelope(e: Exception) -> Optional[dict]:
+    """The {"error": {...}} object of an upstream 4xx, or None."""
+    if not isinstance(e, httpx.HTTPStatusError):
+        return None
+    try:
+        body = e.response.json()
+    except Exception:
+        return None
+    err = body.get("error") if isinstance(body, dict) else None
+    return err if isinstance(err, dict) else None
+
+
+def _is_navigation_row(row: dict) -> bool:
+    """Since 2026-09-26 every search row carries `type` and the API strips its
+    category shortcuts before paging. Trust `type` when present; the CATSYM id
+    prefix is only the fallback for a row that predates the field."""
+    t = row.get("type")
+    if t is not None:
+        return t != "product"
+    return _is_category_stub(row.get("id", ""))
+
+
+def _in_budget(row: dict, min_p: Optional[float], max_p: Optional[float]) -> bool:
+    """Row price and bounds are both in the caller's currency."""
+    amt = (row.get("price") or {}).get("amount")
+    if amt is None:
+        return True
+    try:
+        amt = float(amt)
+    except (TypeError, ValueError):
+        return True
+    if min_p is not None and amt < float(min_p) - 0.005:
+        return False
+    if max_p is not None and amt > float(max_p) + 0.005:
+        return False
+    return True
 
 
 @mcp.tool(
@@ -474,16 +467,22 @@ async def _lkr_per_unit(client, currency: str) -> float | None:
 async def kapruka_search_products(params: SearchProductsInput) -> str:
     """Search for products on Kapruka.com by keyword, with optional category filter and pagination.
 
-    Returns a ranked list of matching products with prices, stock status, images, and URLs.
+    Returns a ranked list of matching products with prices, stock status, images, and URLs,
+    plus the category facets available for the query (facets.categories) — the names that
+    work in `category` to narrow the same search.
     Supports cursor-based pagination — pass next_cursor from one response into the next call.
     Pagination is capped at 3 pages per query to discourage catalog enumeration; for broader
-    discovery, refine the query or filter by category instead.
+    discovery, refine the query or narrow with a facet instead.
 
     Queries must be at least 3 characters and contain specific terms — pure stopword queries
     (e.g. "the", "a an") are rejected.
 
-    By default, category landing pages (CATSYM entries with price=0) are filtered out so results
-    contain only purchasable products. Set include_stubs=true to include them.
+    Relevance: the API matches ANY single query word, so extra words add loosely related
+    results rather than narrowing. Search the thing the customer wants (the head noun) and
+    check the product names actually contain it before presenting them.
+
+    Prices and min_price/max_price are both in `currency` — pass the customer's own budget
+    in their own currency; do not convert it.
 
     Search results carry NO delivery-scope information. Food, hotel cakes and liquor
     are delivered only to selected cities — never infer deliverability from a search
@@ -493,15 +492,15 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
     Args:
         params (SearchProductsInput):
             - q (str): Search query (e.g. 'birthday cake', 'roses', 'tea gift'). Min 3 chars.
-            - category (Optional[str]): Category filter (e.g. 'Birthday', 'Flowers')
+            - category (Optional[str]): A facet name from a previous search's facets.categories
             - limit (int): Results per page, 1–50 (default 10)
             - cursor (Optional[str]): Pagination cursor from previous response
             - currency (str): LKR (default), USD, GBP, AUD, EUR
-            - min_price (Optional[float]): Min price (inclusive) in the requested currency
-            - max_price (Optional[float]): Max price (inclusive) in the requested currency
+            - min_price (Optional[float]): Min price (inclusive) in `currency`
+            - max_price (Optional[float]): Max price (inclusive) in `currency`
             - in_stock_only (bool): Restrict to in-stock items (default false)
             - sort (str): 'relevance' | 'price_asc' | 'price_desc' | 'newest' | 'bestseller'
-            - include_stubs (bool): Include category landing pages (default false)
+            - include_stubs (bool): Deprecated, no effect
             - response_format (str): 'markdown' (default) or 'json'
 
     Returns:
@@ -512,6 +511,7 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
           "results": [
             {
               "id": str,
+              "type": "product",
               "name": str,
               "summary": str,
               "price": {"amount": float | null, "currency": str},
@@ -525,126 +525,77 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
               "url": str
             }
           ],
-          "next_cursor": str | null,    # null after page 3 even if upstream has more
-          "applied_filters": {"q": str, "limit": int, "in_stock_only": bool}
+          "next_cursor": str | null,     # null after page 3 even if upstream has more
+          "total_estimate": int,         # index hits for the query words (any-word match)
+          "applied_filters": {"q": str, "category": str, "currency": str, ...},
+          "facets": {"categories": [{"name": str, "count": int}]},
+          "category_filter_dropped": str,   # only when `category` was not a facet here
+          "valid_categories": [str]         # ...and the facet names that are
         }
 
         Error: "Error: <message>" or "No products found for '<query>'" on failure.
     """
     upstream_cursor, page = _unwrap_cursor(params.cursor)
-
-    # CATSYM stubs (price=0 category landing pages) cluster at the top of price-sorted
-    # results upstream. Over-fetch when sort is numeric so post-filter still gives the
-    # caller a full page of real products. Backend team chose to leave stub filtering
-    # to us rather than change the API.
-    upstream_limit = params.limit
-    needs_overfetch = (
-        not params.include_stubs
-        and params.sort in ("price_asc", "price_desc", "bestseller")
-    )
-    if needs_overfetch:
-        upstream_limit = min(params.limit * 3, 50)
-
     client = KaprukaClient()
-
-    # Price bounds: upstream compares them in LKR (see _lkr_per_unit). Convert,
-    # and if the rate cannot be read, send no bounds and filter locally instead
-    # — a bound the server would misread is worse than one we apply ourselves.
     min_p, max_p = params.min_price, params.max_price
-    up_min, up_max = min_p, max_p
-    price_rate = 1.0
-    price_local_only = False
-    if (min_p is not None or max_p is not None) and (params.currency or "LKR").upper() != "LKR":
-        rate = await _lkr_per_unit(client, params.currency)
-        if rate:
-            price_rate = rate
-            up_min = min_p * rate if min_p is not None else None
-            up_max = max_p * rate if max_p is not None else None
-        else:
-            up_min = up_max = None
-            price_local_only = True
-        # Locally-bounded searches need headroom, since upstream is unfiltered.
-        if price_local_only:
-            upstream_limit = min(max(upstream_limit, params.limit) * 4, 50)
 
-    try:
-        data = await client.call(
+    async def _search(category: Optional[str]) -> dict:
+        return await client.call(
             "products_search",
             q=params.q,
-            limit=upstream_limit,
-            category=params.category,
+            limit=params.limit,
+            category=category,
             cursor=upstream_cursor,
             currency=params.currency,
-            min_price=up_min,
-            max_price=up_max,
+            min_price=min_p,
+            max_price=max_p,
             in_stock_only="true" if params.in_stock_only else None,
             sort=params.sort if params.sort != "relevance" else None,
         )
+
+    # An unknown facet is `400 invalid_category` since 2026-09-26, with the valid
+    # names for the query in `details.valid_categories`. Retry once without the
+    # filter so a wrong name costs precision, not the answer, and hand the valid
+    # names back so the caller can narrow properly. (Before that date the API
+    # answered 200 with zero rows; 75 of 92 filtered searches in a five-day
+    # sample were lost that way — Cakes 40/40, Flowers 23/23.)
+    dropped: Optional[str] = None
+    valid_categories: list[str] = []
+    try:
+        data = await _search(params.category)
     except Exception as e:
-        return handle_api_error(e)
-
-    def _in_budget(row: dict) -> bool:
-        """The returned price is already in the caller's currency, so this is the
-        authoritative check — it also catches rounding in the converted bound."""
-        amt = (row.get("price") or {}).get("amount")
-        if amt is None:
-            return True
-        try:
-            amt = float(amt)
-        except (TypeError, ValueError):
-            return True
-        if min_p is not None and amt < float(min_p) - 0.005:
-            return False
-        if max_p is not None and amt > float(max_p) + 0.005:
-            return False
-        return True
-
-    def _usable(payload: dict) -> list[dict]:
-        rows: list[dict] = payload.get("results", [])
-        if not params.include_stubs:
-            rows = [r for r in rows if not _is_category_stub(r.get("id", ""))]
-        if min_p is not None or max_p is not None:
-            rows = [r for r in rows if _in_budget(r)]
-        return rows[: params.limit]
-
-    results = _usable(data)
-
-    # CATEGORY FALLBACK (2026-09-20, diagnosis corrected 2026-09-21).
-    # `category` is the website's SUBCATEGORY FACET (`subcat=` in
-    # srilanka_online_search.jsp), not a department: 'Kapruka Cakes' and
-    # 'Fresh Flowers' work and reproduce the site's own result list exactly,
-    # while 'Cakes'/'Flowers' — until 2026-09-21 two of the three examples in
-    # this tool's parameter description — match nothing. The valid set depends
-    # on the query, and nothing in the API advertises it: the search response
-    # carries no facet list (upstream returns only results, next_cursor,
-    # total_estimate, applied_filters), and kapruka_list_categories returns a
-    # different vocabulary whose 'cakes'/'flowers' entries are not searchable.
-    # Measured over 5 days of live agent traffic: 92 searches carried a
-    # category and 75 came back empty (Cakes 40/40, Flowers 23/23), every one a
-    # customer asking for a cake or flowers. Retry once without the filter so a
-    # wrong facet name costs relevance, never the whole result set.
-    category_dropped = False
-    if not results and params.category:
-        try:
-            data = await client.call(
-                "products_search",
-                q=params.q,
-                limit=upstream_limit,
-                cursor=upstream_cursor,
-                currency=params.currency,
-                min_price=up_min,
-                max_price=up_max,
-                in_stock_only="true" if params.in_stock_only else None,
-                sort=params.sort if params.sort != "relevance" else None,
-            )
-        except Exception as e:
+        err = _error_envelope(e)
+        if not (params.category and err and err.get("code") == "invalid_category"):
             return handle_api_error(e)
-        results = _usable(data)
-        category_dropped = bool(results)
+        details = err.get("details") or {}
+        valid_categories = [c for c in details.get("valid_categories") or [] if isinstance(c, str)]
+        dropped = params.category
+        try:
+            data = await _search(None)
+        except Exception as e2:
+            return handle_api_error(e2)
+
+    rows = [r for r in data.get("results", []) if not _is_navigation_row(r)]
+    if min_p is not None or max_p is not None:
+        # The API now bounds in `currency`; this only guards the contract.
+        rows = [r for r in rows if _in_budget(r, min_p, max_p)]
+    results = rows[: params.limit]
+
+    facets = [
+        {"name": f.get("name"), "count": f.get("count")}
+        for f in ((data.get("facets") or {}).get("categories") or [])
+        if isinstance(f, dict) and f.get("name")
+    ]
 
     if not results:
-        suffix = f" in category '{params.category}'" if params.category else ""
-        return f"No products found for '{params.q}'{suffix}."
+        where = f" in category '{params.category}'" if params.category and not dropped else ""
+        msg = f"No products found for '{params.q}'{where}."
+        if dropped and valid_categories:
+            msg += (
+                f" ('{dropped}' is not a category for this search; valid here: "
+                f"{', '.join(valid_categories[:12])}.)"
+            )
+        return msg
 
     next_cursor = _wrap_cursor(data.get("next_cursor"), page)
 
@@ -653,48 +604,49 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
             {
                 "results": results,
                 "next_cursor": next_cursor,
+                "total_estimate": data.get("total_estimate"),
                 "applied_filters": data.get("applied_filters", {}),
-                **({"category_filter_dropped": params.category} if category_dropped else {}),
-                **({"price_bounds_converted_to_lkr": round(price_rate, 4)}
-                   if price_rate != 1.0 else {}),
-                **({"price_filtered_locally": True} if price_local_only else {}),
+                "facets": {"categories": facets},
+                **(
+                    {"category_filter_dropped": dropped, "valid_categories": valid_categories}
+                    if dropped else {}
+                ),
             },
             indent=2,
             ensure_ascii=False,
         )
 
     # ── Markdown format
-    cat_label = "" if category_dropped else (f" in **{params.category}**" if params.category else "")
+    applied = params.category if params.category and not dropped else None
     lines: list[str] = [
-        f"## Kapruka search: \"{params.q}\"{cat_label}",
+        f"## Kapruka search: \"{params.q}\"" + (f" in **{applied}**" if applied else ""),
         f"Showing {len(results)} results ({params.currency})",
     ]
-    if category_dropped:
+    if dropped:
+        valid = f" Categories that do exist for this search: {', '.join(valid_categories[:12])}." \
+            if valid_categories else ""
         lines.append(
-            f"_Nothing matched in category '{params.category}', so the category filter was "
-            f"dropped and these are results for \"{params.q}\" across the catalogue. "
-            f"Do not re-send that category._"
+            f"_'{dropped}' is not a category for this search, so the filter was dropped and "
+            f"these are results for \"{params.q}\" across the catalogue.{valid} "
+            f"Do not re-send '{dropped}'._"
         )
     lines.append("")
 
     for i, r in enumerate(results, 1):
         rid = r.get("id", "")
-        if _is_category_stub(rid):
-            landing = _extract_catsym_url(r.get("summary", "")) or r.get("url", "")
-            lines.append(f"**{i}. {r.get('name')}** _(browse page)_")
-            if landing:
-                lines.append(f"   [Browse category]({landing})")
-        else:
-            price_str = _fmt_price(r.get("price"))
-            stock_str = _stock_label(r)
-            intl = " · ships internationally" if r.get("ships_internationally") else ""
-            lines.append(f"**{i}. {r.get('name')}**")
-            lines.append(f"   ID: `{rid}` · {price_str} · {stock_str}{intl}")
-            url = r.get("url")
-            if url:
-                lines.append(f"   [View product]({url})")
+        price_str = _fmt_price(r.get("price"))
+        stock_str = _stock_label(r)
+        intl = " · ships internationally" if r.get("ships_internationally") else ""
+        lines.append(f"**{i}. {r.get('name')}**")
+        lines.append(f"   ID: `{rid}` · {price_str} · {stock_str}{intl}")
+        url = r.get("url")
+        if url:
+            lines.append(f"   [View product]({url})")
         lines.append("")
 
+    if facets and not applied:
+        top = ", ".join(f"{f['name']} ({f['count']})" for f in facets[:8])
+        lines.append(f"_Narrow with `category` (facets for this search): {top}_")
     if next_cursor:
         lines.append(f"*More results available. Pass `cursor=\"{next_cursor}\"` for the next page.*")
 

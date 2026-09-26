@@ -37,8 +37,9 @@ WELL_KNOWN_MCP: dict = {
             {
                 "name": "kapruka_search_products",
                 "description": (
-                    "Search the Kapruka catalog by keyword with optional category, "
-                    "price range, stock, and sort filters."
+                    "Search the Kapruka catalog by keyword with optional category "
+                    "facet, price range (in the requested currency), stock, and sort "
+                    "filters. Every response lists the category facets for the query."
                 ),
             },
             {
@@ -52,7 +53,8 @@ WELL_KNOWN_MCP: dict = {
             {
                 "name": "kapruka_list_categories",
                 "description": (
-                    "List Kapruka's top-level product categories with browse URLs."
+                    "List Kapruka's navigation categories with browse URLs (for "
+                    "browsing, not a search filter — search lists its own facets)."
                 ),
             },
             {

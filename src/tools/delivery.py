@@ -262,6 +262,14 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     will be rejected. An unknown product_id is silently ignored (no item fields
     in the result), so check `item_deliverable` is present before relying on it.
 
+    product_id also selects the SAME-DAY rule the checkout applies to that item:
+    vendor-delivered items (restaurant food) can go today until late afternoon;
+    ordinary items move to the next date; ordinary same-day is only possible early
+    in the morning near Colombo. So a check without product_id can differ from one
+    with it — always pass it once an item is chosen. When `available` is false,
+    offer `next_available_date`. Do not interpret the `reason` text (it is the
+    website's wording and may say slots are full when the real cause is the cutoff).
+
     Perishable codes (CAKE*, FLOWER*, COMBO*) additionally get a freshness
     warning when the chosen delivery date is more than 1 day out.
 

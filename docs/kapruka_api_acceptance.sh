@@ -75,41 +75,39 @@ print('FAIL|rows below the USD 50 minimum: %s' % under[:3] if under else 'PASS|n
   "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=cake' \
         --data-urlencode 'currency=USD' --data-urlencode 'min_price=50' --data-urlencode 'limit=6')"
 
-# The same NUMBER in two currencies must not mean the same thing.
-A=$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=cake' \
-       --data-urlencode 'currency=USD' --data-urlencode 'max_price=9600' --data-urlencode 'limit=6')
-B=$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=cake' \
-       --data-urlencode 'currency=LKR' --data-urlencode 'max_price=9600' --data-urlencode 'limit=6')
-check "bound-is-currency-sensitive" \
-  "max_price=9600 selects a different set in USD than in LKR" \
-  "
+# The same NUMBER in two currencies must not mean the same thing. Use a bound
+# that bites: comparing the top six of a loose bound cannot see the difference
+# (the six best-ranked cakes are under both LKR 9600 and USD 9600).
+A=$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=cake'        --data-urlencode 'currency=USD' --data-urlencode 'max_price=20' --data-urlencode 'limit=6')
+B=$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=cake'        --data-urlencode 'currency=LKR' --data-urlencode 'max_price=20' --data-urlencode 'limit=6')
+check "bound-is-currency-sensitive"   "max_price=20 finds cakes in USD and none in LKR (no cake costs 20 rupees)"   "
 import json
 other = json.loads(open('/tmp/_acc_b.json', encoding='utf-8').read())
-a = [r['id'] for r in rows]
-b = [r['id'] for r in other.get('results', [])]
-if a == b:
-    print('FAIL|USD 9600 and LKR 9600 return the identical set %s' % a[:3])
+lkr = other.get('results', [])
+if not rows:
+    print('FAIL|USD 20 found nothing')
+elif lkr:
+    print('FAIL|LKR 20 found %d rows' % len(lkr))
 else:
-    print('PASS|the two currencies select different sets')
-" \
-  "$(printf '%s' "$B" > /tmp/_acc_b.json; printf '%s' "$A")"
+    print('PASS|USD 20 -> %d cakes, LKR 20 -> none' % len(rows))
+"   "$(printf '%s' "$B" > /tmp/_acc_b.json; printf '%s' "$A")"
 
 echo
 echo "=== 2. an unknown category must not be answered with silence =============="
 
-check "unknown-facet-is-not-silent" \
-  "400 invalid_category, or the filter is ignored and applied_filters says so" \
-  "
+check "unknown-facet-is-not-silent"   "400 invalid_category listing valid_categories, or the filter ignored and dropped from applied_filters"   "
+err = d.get('error') or {}
 af = d.get('applied_filters') or {}
-if af.get('category') == 'ZZZ_NOT_A_REAL_FACET' and not rows:
-    print('FAIL|HTTP 200, 0 rows, bad facet echoed back as if honoured')
-elif not af.get('category') and rows:
-    print('PASS|filter ignored and dropped from applied_filters')
+if err.get('code') == 'invalid_category':
+    vc = (err.get('details') or {}).get('valid_categories') or []
+    print('PASS|invalid_category, %d valid names offered' % len(vc) if vc else 'FAIL|invalid_category but no valid_categories')
+elif err:
+    print('FAIL|unexpected error %s' % err.get('code'))
+elif af.get('category') == 'ZZZ_NOT_A_REAL_FACET':
+    print('FAIL|bad facet echoed back as if honoured (%d rows)' % len(rows))
 else:
-    print('PASS|%d rows, applied_filters=%s' % (len(rows), json.dumps(af)))
-" \
-  "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=birthday cake' \
-        --data-urlencode 'category=ZZZ_NOT_A_REAL_FACET' --data-urlencode 'limit=6')"
+    print('PASS|filter ignored and dropped from applied_filters')
+"   "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=birthday cake'         --data-urlencode 'category=ZZZ_NOT_A_REAL_FACET' --data-urlencode 'limit=6')"
 
 check "search-publishes-its-facets" \
   "the search response carries the facet names valid for this query" \
@@ -120,13 +118,16 @@ print('PASS|facet list present: %s' % has if has else 'FAIL|no facet list; top-l
 " \
   "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=birthday cake' --data-urlencode 'limit=2')"
 
-check "published-category-names-work" \
-  "a name from the categories endpoint works as a category filter" \
-  "
-print('PASS|%d rows' % len(rows) if rows else 'FAIL|category=Electronic (a name you publish, with a product_count) matches nothing, while q=phone alone returns phones')
-" \
-  "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=phone' \
-        --data-urlencode 'category=Electronic' --data-urlencode 'limit=3')"
+# The `categories` endpoint is site NAVIGATION, a different vocabulary from the
+# search facets (Kapruka, 2026-09-26) — so the contract to test is that the
+# facet names a search publishes are usable as its filter.
+FACET=$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=phone' --data-urlencode 'limit=1'   | python3 -c "import json,sys; f=(json.load(sys.stdin).get('facets') or {}).get('categories') or []; print(f[0]['name'] if f else '')")
+check "published-facet-names-work"   "the first facet a search publishes works as its category filter"   "
+if not '$FACET':
+    print('FAIL|q=phone published no facets')
+else:
+    print('PASS|category=%s -> %d rows' % ('$FACET', len(rows)) if rows else 'FAIL|category=%s (published by the same search) -> 0 rows' % '$FACET')
+"   "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=phone'         --data-urlencode "category=$FACET" --data-urlencode 'limit=3')"
 
 echo
 echo "=== 3. relevance: one matching token must not be enough ==================="
@@ -144,13 +145,16 @@ else:
 " \
   "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=Largactil 50mg' --data-urlencode 'limit=4')"
 
-check "head-noun-outranks-one-token" \
-  "the medical walker outranks Johnnie Walker for 'medipedic walker'" \
-  "
+check "head-noun-outranks-one-token"   "for 'medipedic walker' the top hit is a mobility walker, not liquor or a baby/toddler item"   "
 top = (rows[0].get('name') if rows else '')
-print('FAIL|top hit is %r' % top if 'Johnnie' in top else 'PASS|top hit is %r' % top)
-" \
-  "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=medipedic walker' --data-urlencode 'limit=5')"
+bad = [w for w in ('johnnie', 'label', 'baby', 'toddler', 'shoe', 'treadmill') if w in top.lower()]
+if not rows:
+    print('FAIL|0 rows (the catalogue has mobility walkers)')
+elif bad or 'walker' not in top.lower():
+    print('FAIL|top hit is %r' % top)
+else:
+    print('PASS|top hit is %r' % top)
+"   "$(get --data-urlencode 'endpoint=products_search' --data-urlencode 'q=medipedic walker' --data-urlencode 'limit=5')"
 
 echo
 echo "=== 4. Sinhala ============================================================"
