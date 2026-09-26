@@ -96,6 +96,37 @@ trouble and will come back.
 
 ---
 
+## New: `kapruka_visual_search` (private, 2026-09-26)
+
+A second search, **in addition to** `kapruka_search_products` — not a
+replacement. It ranks products on descriptions of their photos plus their text,
+so it understands phrases instead of matching any one word:
+
+```
+kapruka_search_products  "medipedic walker" -> 1 Baby Walker Helper Hand Held Belt
+kapruka_visual_search    "medipedic walker" -> 1 MOVING WALKER WITH WHEEL (FS912L)
+```
+
+- **Use it when** the customer describes how something looks, who it's for or
+  the occasion ("red roses in a heart box", "unicorn cake for a 5 year old"); when
+  the keyword search returns names that don't contain what was asked (rule 1); and
+  before telling a customer "we don't have that".
+- Keep using `kapruka_search_products` for exact names and product codes.
+- Same inputs as search: `q`, `category`, `currency`, `min_price`/`max_price` (in
+  the customer's currency), `sort` (`relevance`/`price_asc`/`price_desc`), plus
+  `page`. Categories work the same way — narrow with a name from its own
+  "Narrow with `category`" list.
+- Each result has a short description of the photo — handy for checking it's the
+  right thing. `has_variants` means sizes/options exist: check
+  `kapruka_get_product` before ordering. `stands_in_for` marks a near-identical
+  item shown in place of a sold-out one.
+- **No stock or delivery info** — confirm with `kapruka_get_product` /
+  `kapruka_check_delivery` before promising, as usual. The IDs work in
+  `kapruka_create_order`.
+- It is private: it isn't in the tool list, so call it by name. It only answers
+  calls from the eagle server. If it errors (`visual_search_unavailable`, `…_failed`,
+  `…_rate_limited`), just use `kapruka_search_products`.
+
 ## Rules from the old brief that no longer apply
 
 - ~~"Default to omitting `category`"~~ — now search first, then narrow with a
