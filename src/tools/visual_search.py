@@ -79,7 +79,14 @@ class VisualSearchInput(BaseModel):
     min_price: Optional[float] = Field(default=None, ge=0, description="Minimum price, in `currency`.")
     max_price: Optional[float] = Field(default=None, ge=0, description="Maximum price, in `currency`.")
     sort: str = Field(default="relevance", description="'relevance' (default), 'price_asc' or 'price_desc'.")
-    include_adult: bool = Field(default=False, description="Include adult products (off by default).")
+    include_adult: bool = Field(
+        default=True,
+        description=(
+            "Adult products (a feed category containing 'Adult', ~770 items) are "
+            "included by default, as on the site and in kapruka_search_products. "
+            "Set false to leave them out."
+        ),
+    )
     response_format: str = Field(default="markdown", description="'markdown' (default) or 'json'.")
 
     @field_validator("q")
@@ -243,7 +250,8 @@ async def kapruka_visual_search(params: VisualSearchInput, ctx: Context) -> str:
     Args:
         params (VisualSearchInput): q, category, limit (1–50), page (1–10), currency,
             min_price, max_price, sort ('relevance'|'price_asc'|'price_desc'),
-            include_adult (default false), response_format.
+            include_adult (default true — set false to leave adult products out),
+            response_format.
 
     Returns:
         str. JSON schema:
@@ -298,7 +306,9 @@ async def kapruka_visual_search(params: VisualSearchInput, ctx: Context) -> str:
             "min_price": min_lkr,
             "max_price": max_lkr,
             "sort": params.sort if params.sort != "relevance" else None,
-            "include_adult": 1 if params.include_adult else None,
+            # Always explicit: Eagle's default flipped to "included" on 2026-09-27,
+            # and an implicit default would silently change behaviour again.
+            "include_adult": 1 if params.include_adult else 0,
         }
 
     dropped: Optional[str] = None

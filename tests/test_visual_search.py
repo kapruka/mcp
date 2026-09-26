@@ -134,7 +134,14 @@ async def test_sends_key_header_and_query():
     assert str(req.url).startswith(URL)
     p = req.url.params
     assert p["q"] == "red roses" and p["limit"] == "5" and p["page"] == "2" and p["sort"] == "price_asc"
-    assert "include_adult" not in p and "min_price" not in p
+    assert p["include_adult"] == "1", "adult included by default, sent explicitly"
+    assert "min_price" not in p
+
+
+@pytest.mark.asyncio
+async def test_include_adult_false_is_sent_as_zero():
+    await _run(include_adult=False)
+    assert Eagle.requests[-1].url.params["include_adult"] == "0"
 
 
 @pytest.mark.asyncio

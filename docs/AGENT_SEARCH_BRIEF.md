@@ -120,6 +120,8 @@ kapruka_visual_search    "medipedic walker" -> 1 MOVING WALKER WITH WHEEL (FS912
   right thing. `has_variants` means sizes/options exist: check
   `kapruka_get_product` before ordering. `stands_in_for` marks a near-identical
   item shown in place of a sold-out one.
+- Adult products are **included by default**, as on the site. Pass
+  `include_adult: false` when the conversation calls for it.
 - **No stock or delivery info** — confirm with `kapruka_get_product` /
   `kapruka_check_delivery` before promising, as usual. The IDs work in
   `kapruka_create_order`.
