@@ -21,16 +21,29 @@ from typing import Any, Optional
 import asyncpg
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from src import partners
+
 logger = logging.getLogger(__name__)
 
 # tool_args text is cast to jsonb in SQL so we can pass the raw JSON string.
-_INSERT_SQL = """
-INSERT INTO mcp_activity (
-    client_ip, user_agent, session_id, mcp_method, tool_name, tool_args,
-    status_code, latency_ms, error, request_bytes, response_bytes,
-    forwarded_for, cf_ray, cf_country
-) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14)
-"""
+_BASE_COLUMNS = (
+    "client_ip", "user_agent", "session_id", "mcp_method", "tool_name", "tool_args",
+    "status_code", "latency_ms", "error", "request_bytes", "response_bytes",
+    "forwarded_for", "cf_ray", "cf_country",
+)
+# Added 2026-10 for trusted partners (deploy/migrations/2026-10-02_mcp_activity_partner.sql).
+# Used only once the table has them, so the code can ship before the migration runs.
+_PARTNER_COLUMNS = ("partner", "partner_customer_id")
+
+
+def _insert_sql(columns: tuple[str, ...]) -> str:
+    placeholders = ", ".join(
+        f"${i}::jsonb" if c == "tool_args" else f"${i}" for i, c in enumerate(columns, 1)
+    )
+    return f"INSERT INTO mcp_activity ({', '.join(columns)}) VALUES ({placeholders})"
+
+
+_INSERT_SQL = _insert_sql(_BASE_COLUMNS)
 
 _TRUNCATE_ARGS_BYTES = 4096
 _QUEUE_MAX = 2000
@@ -48,6 +61,8 @@ class ActivityLogger:
         self._init_lock: Optional[asyncio.Lock] = None
         self._init_done = False
         self._dropped = 0
+        self._columns: tuple[str, ...] = _BASE_COLUMNS
+        self._sql = _INSERT_SQL
 
     async def ensure_started(self) -> None:
         """Lazy-init the pool + worker on first use. Idempotent.
@@ -79,6 +94,8 @@ class ActivityLogger:
                     command_timeout=10,
                     ssl=sslctx,
                 )
+                self._columns = await self._detect_columns()
+                self._sql = _insert_sql(self._columns)
                 self._queue = asyncio.Queue(maxsize=_QUEUE_MAX)
                 self._worker = asyncio.create_task(
                     self._drain(), name="activity-log-drain"
@@ -91,6 +108,29 @@ class ActivityLogger:
             finally:
                 # Mark done either way so we don't hammer a dead DB on every request.
                 self._init_done = True
+
+    async def _detect_columns(self) -> tuple[str, ...]:
+        """Base columns, plus the partner ones if the table already has them.
+        information_schema lists columns the role holds any privilege on, so this
+        works for the INSERT-only app role."""
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'mcp_activity' AND column_name = ANY($1::text[])",
+                    list(_PARTNER_COLUMNS),
+                )
+            present = {r["column_name"] for r in rows}
+        except Exception as e:
+            logger.warning("activity_log: column check failed (%s); logging without partner columns", e)
+            return _BASE_COLUMNS
+        if present >= set(_PARTNER_COLUMNS):
+            logger.info("activity_log: partner columns present")
+            return _BASE_COLUMNS + _PARTNER_COLUMNS
+        logger.warning("activity_log: mcp_activity has no partner columns yet — partner and "
+                       "customer id are not being recorded; run "
+                       "deploy/migrations/2026-10-02_mcp_activity_partner.sql")
+        return _BASE_COLUMNS
 
     def enqueue(self, entry: dict) -> None:
         if self._queue is None:
@@ -113,21 +153,8 @@ class ActivityLogger:
             try:
                 async with self._pool.acquire() as conn:
                     await conn.execute(
-                        _INSERT_SQL,
-                        entry.get("client_ip"),
-                        entry.get("user_agent"),
-                        entry.get("session_id"),
-                        entry.get("mcp_method"),
-                        entry.get("tool_name"),
-                        entry.get("tool_args"),
-                        entry.get("status_code"),
-                        entry.get("latency_ms"),
-                        entry.get("error"),
-                        entry.get("request_bytes"),
-                        entry.get("response_bytes"),
-                        entry.get("forwarded_for"),
-                        entry.get("cf_ray"),
-                        entry.get("cf_country"),
+                        self._sql,
+                        *(entry.get(c) for c in self._columns),
                     )
             except asyncio.CancelledError:
                 raise
@@ -271,6 +298,9 @@ class ActivityLogMiddleware:
         await self.log.ensure_started()
 
         meta = _extract_meta(scope, self.trusted_proxies)
+        ident = partners.identity_from_scope(scope)
+        meta["partner"] = ident.partner if ident else None
+        meta["partner_customer_id"] = ident.customer_id if ident else None
         start = time.monotonic()
 
         body_chunks: list[bytes] = []

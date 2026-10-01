@@ -62,6 +62,41 @@ landing page, llms.txt, version bump, `scripts/publish-registry.sh`).
 eagle-dashboard box), `TRUSTED_PROXIES=127.0.0.1,::1`, `ACTIVITY_DB_URL`
 (Postgres on eagle). See `src/config/settings.py` for defaults.
 
+Trusted partners (key-based access, e.g. aloka): `PARTNER_KEYS`,
+`PARTNER_SCOPES`, optional `PARTNER_LIMITS` and `PARTNER_*_LIMIT_*` defaults —
+see [docs/PARTNER_ACCESS.md](../docs/PARTNER_ACCESS.md).
+
+## Adding a trusted partner
+
+Run these yourself — the steps touch the production `.env` and Eagle's database.
+
+1. **Make the key** (locally): `python3 -c "import secrets,hashlib; k=secrets.token_urlsafe(32); print('KEY:', k); print('HASH:', hashlib.sha256(k.encode()).hexdigest())"`.
+   Give the **KEY** to the partner out of band; keep only the **HASH**.
+2. **Add the columns** on the Eagle Postgres, as the owner of `mcp_activity`:
+   `psql "$EAGLE_ADMIN_DSN" -f deploy/migrations/2026-10-02_mcp_activity_partner.sql`
+   (skipping it is safe — partner name and customer id just aren't recorded until it runs).
+3. **Add to `/srv/kapruka-mcp/.env`** on the box (0600, owner `kapruka`):
+   ```bash
+   ssh -i ~/.ssh/javalounge_newserver_ed25519 roman@23.111.183.156
+   sudo cp -a /srv/kapruka-mcp/.env /srv/kapruka-mcp/.env.bak-partners-$(date +%Y%m%d%H%M)
+   sudo -u kapruka tee -a /srv/kapruka-mcp/.env >/dev/null <<'ENV'
+
+   PARTNER_KEYS=aloka:sha256:<HASH>
+   PARTNER_SCOPES=aloka:visual_search,custom_cake
+   ENV
+   ```
+4. **Ship and restart**: `bash deploy/sync-to-prod.sh` from the repo (it restarts
+   the service). If the code is already deployed: `sudo systemctl restart kapruka-mcp`.
+5. **Check**: `sudo journalctl -u kapruka-mcp -n 30 | grep -i partner` should show
+   `partners: aloka (1 key(s), scopes: custom_cake, visual_search)` and, after the
+   first request, `activity_log: partner columns present`. Then from anywhere:
+   `curl -si https://mcp.kapruka.com/mcp -H "X-Partner-Key: <KEY>" … initialize …`
+   → `RateLimit-Limit: 600`. The same call without the header → `60`.
+
+Rotation: append a second `aloka:sha256:<NEW HASH>` entry (`;`-separated),
+restart, hand over the new key, and remove the old entry once the partner has
+switched. Revoking: remove the entries and restart.
+
 ## Useful operations
 
 ```bash

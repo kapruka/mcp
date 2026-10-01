@@ -8,7 +8,8 @@ quoted cake goes through the normal kapruka_create_order with a
 
 "Closed MCP": these tools are hidden from tools/list and only answer callers
 whose IP is in CUSTOM_CAKE_TRUSTED_IPS (defaults to the trusted-tier list,
-i.e. the eagle sales-agent box). Backend: commerce_phase3.jsp, phase-3 token.
+i.e. the eagle sales-agent box), or a partner key granted the `custom_cake`
+group (src/partners.py). Backend: commerce_phase3.jsp, phase-3 token.
 """
 
 from __future__ import annotations

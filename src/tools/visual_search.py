@@ -10,7 +10,8 @@ fails, after a short timeout.
 
 Private: hidden from tools/list, not in the well-known manifest, landing page,
 llms.txt or the MCP registry, and callable only from VISUAL_SEARCH_TRUSTED_IPS
-(default: the trusted tier, i.e. the eagle box running Kapruka's sales agent).
+(default: the trusted tier, i.e. the eagle box running Kapruka's sales agent)
+or by a partner key granted the `visual_search` group (src/partners.py).
 
 Upstream contract: eagle-dashboard/docs/visual-search-cache.md. Eagle itself
 only accepts calls from this MCP host's IP plus an X-API-Key, so the key never

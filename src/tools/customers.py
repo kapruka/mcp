@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.client import KaprukaClient, handle_api_error
 from src.config.settings import settings
+from src import partners
 from src.server import mcp
 
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
@@ -444,7 +445,25 @@ _orig_list_tools = mcp._tool_manager.list_tools
 
 
 def _visible_tools():
-    return [t for t in _orig_list_tools() if t.name not in _HIDDEN_TOOLS]
+    """Public tools, plus — for a partner holding a valid key — the hidden tools in
+    its granted groups. IP-allowlisted callers (Eagle) and the public see exactly
+    the public list, as before; they call hidden tools by name."""
+    shown = _partner_tool_names()
+    return [t for t in _orig_list_tools() if t.name not in _HIDDEN_TOOLS or t.name in shown]
+
+
+def _partner_tool_names() -> frozenset[str]:
+    try:
+        request = mcp._mcp_server.request_context.request
+    except Exception:  # no request in flight (startup, stdio, direct calls)
+        return frozenset()
+    ident = partners.identity_from_scope(getattr(request, "scope", None))
+    if ident is None:
+        return frozenset()
+    names: set[str] = set()
+    for group in partners.current().scopes_for(ident.partner):
+        names |= partners.TOOL_GROUPS.get(group, frozenset())
+    return frozenset(names)
 
 
 mcp._tool_manager.list_tools = _visible_tools

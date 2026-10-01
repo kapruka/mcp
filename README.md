@@ -53,6 +53,15 @@ tests/             # pytest test suite
 cli.py             # Developer CLI
 ```
 
+## Trusted partners
+
+First-party callers that can't be IP-allowlisted (e.g. Kapruka's web assistant
+on Cloudflare Workers) authenticate with an `X-Partner-Key` header instead, with
+optional per-customer limits via `X-Partner-Customer-Id`. Configured with
+`PARTNER_KEYS` / `PARTNER_SCOPES` / `PARTNER_LIMITS`. See
+[docs/PARTNER_ACCESS.md](docs/PARTNER_ACCESS.md) and the deploy steps in
+[deploy/README.md](deploy/README.md#adding-a-trusted-partner).
+
 ## Running Tests
 
 ```bash

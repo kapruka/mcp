@@ -52,6 +52,9 @@ class Settings:
     visual_search_trusted_ips: list[str] = _csv(
         "VISUAL_SEARCH_TRUSTED_IPS", _csv("RATE_LIMIT_EXEMPT_IPS", [])
     )
+    # Trusted partners (X-Partner-Key: PARTNER_KEYS / PARTNER_SCOPES /
+    # PARTNER_LIMITS / PARTNER_*_LIMIT_*) are parsed in src/partners.py,
+    # which reads the same environment. See docs/PARTNER_ACCESS.md.
     # Cap for images fetched on behalf of the agent (brief: 5 MB before base64).
     custom_cake_image_max_bytes: int = int(
         os.getenv("CUSTOM_CAKE_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))

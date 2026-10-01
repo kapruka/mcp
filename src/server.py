@@ -21,6 +21,8 @@ from src.cache import cache
 from src.config.settings import settings
 from src.middleware import RateLimitMiddleware
 from src.order_rate_limit import OrderRateLimitMiddleware
+from src.partner_auth import PartnerAuthMiddleware
+from src import partners
 from src.well_known import well_known_mcp, well_known_mcp_options
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -162,6 +164,15 @@ def build_app() -> Starlette:
         )
     else:
         logger.warning("Rate limit DISABLED")
+
+    # Trusted partners (X-Partner-Key). Added LAST so it is the OUTERMOST layer:
+    # it resolves the partner identity once, strips the key header from the
+    # request, and enforces session binding before any limiter, the activity
+    # log or the MCP app sees the request. Always installed — with no
+    # PARTNER_KEYS configured every request is simply public.
+    cfg = partners.current()
+    app.add_middleware(PartnerAuthMiddleware)
+    logger.info("Partner access: %s", "enabled" if cfg.enabled else "no partners configured")
 
     return app
 

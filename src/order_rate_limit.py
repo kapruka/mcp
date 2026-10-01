@@ -8,6 +8,9 @@ Lives in its own middleware (rather than extending RateLimitMiddleware) so the
 two limiters can evolve independently and so we don't have to plumb body-
 sniffing into the existing per-minute path. The body is read once here and
 replayed downstream so ActivityLogMiddleware can still see it.
+
+Partner requests (valid X-Partner-Key) are capped per partner and, with
+X-Partner-Customer-Id, per customer within the partner — see middleware.py.
 """
 
 from __future__ import annotations
@@ -19,6 +22,9 @@ from collections import OrderedDict
 from threading import Lock
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from src import partners
+from src.middleware import PartnerBuckets, acquire_all
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +138,8 @@ class OrderRateLimitMiddleware:
         self.exempt_ips = set(exempt_ips or [])
         self.trusted_limiter = _HourlyIPLimiter(trusted_limit_per_hour)
         self.trusted_limit = trusted_limit_per_hour
+        self.partner_buckets = PartnerBuckets(
+            _WINDOW_SECONDS, "orders_per_hour", "customer_orders_per_hour", "orders/hour")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -161,18 +169,26 @@ class OrderRateLimitMiddleware:
         body = b"".join(chunks)
 
         if _is_order_call(body):
-            ip = _client_ip(scope)
-            trusted = ip in self.exempt_ips
-            limit = self.trusted_limit if trusted else self.limit
-            limiter = self.trusted_limiter if trusted else self.limiter
-            allowed, remaining, reset_in = limiter.check(ip)
+            ident = partners.identity_from_scope(scope)
+            if ident is not None:
+                allowed, label, limit, remaining, reset_in = acquire_all(
+                    self.partner_buckets.checks(ident, partners.current()))
+                per = "per partner" if label == "Partner" else "per customer"
+                who = f"partner={ident.partner} customer={ident.customer_id or '-'}"
+            else:
+                ip = _client_ip(scope)
+                trusted = ip in self.exempt_ips
+                limit = self.trusted_limit if trusted else self.limit
+                limiter = self.trusted_limiter if trusted else self.limiter
+                allowed, remaining, reset_in = limiter.check(ip)
+                per, who = "per IP", f"ip={ip}"
             if not allowed:
-                logger.info("order_rate_limit: blocked ip=%s reset_in=%ds", ip, reset_in)
+                logger.info("order_rate_limit: blocked %s reset_in=%ds", who, reset_in)
                 payload = json.dumps(
                     {
                         "error": "order_rate_limit_exceeded",
                         "message": (
-                            f"Order limit of {limit}/hour per IP exceeded. "
+                            f"Order limit of {limit}/hour {per} exceeded. "
                             f"Try again in {reset_in}s."
                         ),
                     }

@@ -1,16 +1,23 @@
 """Closed-MCP gate for private tools.
 
-Private tools (custom cakes, visual search) are hidden from tools/list and only
-answer callers whose real IP is on a trusted list — in practice the eagle box
-that runs Kapruka's own sales agent. The MCP app listens on 127.0.0.1 behind
-local Caddy (which sets X-Real-IP from Cloudflare's CF-Connecting-IP), so the
-forwarded headers are trustworthy here.
+Private tools (custom cakes, visual search) are hidden from the public
+tools/list and only answer trusted callers:
+
+    trusted = (caller IP on the tool's allow-list)          — e.g. the eagle box
+           OR (valid partner key whose scopes include the tool's group)
+
+The partner side is decided once by PartnerAuthMiddleware and read from the
+request scope here; this module never looks at the key header itself. The MCP
+app listens on 127.0.0.1 behind local Caddy (which sets X-Real-IP from
+Cloudflare's CF-Connecting-IP), so the forwarded IP headers are trustworthy.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Iterable
+
+from src import partners
 
 logger = logging.getLogger(__name__)
 
@@ -31,21 +38,35 @@ def client_ip_from_request(request) -> str:
     return client.host if client and client.host else "unknown"
 
 
-def is_trusted_caller(ctx, allowed: Iterable[str], family: str) -> bool:
-    """True when the MCP request behind `ctx` comes from an allowed IP.
-
-    Fails closed: an empty allow-list, or no HTTP request in the context (stdio
-    transport, unit tests without one), means nobody gets in.
-    """
-    allowed = set(allowed)
-    if not allowed:
-        return False
+def _request_of(ctx):
     try:
-        request = ctx.request_context.request if ctx is not None else None
-    except Exception:
-        request = None
-    ip = client_ip_from_request(request)
-    if ip in allowed:
+        return ctx.request_context.request if ctx is not None else None
+    except Exception:  # no request context (stdio transport, unit tests without one)
+        return None
+
+
+def partner_identity(ctx) -> "partners.Identity | None":
+    """The partner identity of the HTTP request behind `ctx`, if any."""
+    request = _request_of(ctx)
+    return partners.identity_from_scope(getattr(request, "scope", None))
+
+
+def is_trusted_caller(ctx, allowed: Iterable[str], family: str) -> bool:
+    """True when the MCP request behind `ctx` comes from an allowed IP, or from a
+    partner whose scopes include `family` (a key of partners.TOOL_GROUPS).
+
+    Fails closed: an empty allow-list and no partner scope, or no HTTP request in
+    the context (stdio transport, unit tests without one), means nobody gets in.
+    """
+    request = _request_of(ctx)
+    allowed = set(allowed)
+    if allowed and client_ip_from_request(request) in allowed:
         return True
-    logger.info("%s: denied ip=%s", family, ip)
+    ident = partners.identity_from_scope(getattr(request, "scope", None))
+    if ident is not None and family in partners.current().scopes_for(ident.partner):
+        return True
+    if ident is not None:
+        logger.info("%s: denied partner=%s (not in its scopes)", family, ident.partner)
+    else:
+        logger.info("%s: denied ip=%s", family, client_ip_from_request(request))
     return False
