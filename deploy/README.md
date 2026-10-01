@@ -87,11 +87,14 @@ Run these yourself — the steps touch the production `.env` and Eagle's databas
    ```
 4. **Ship and restart**: `bash deploy/sync-to-prod.sh` from the repo (it restarts
    the service). If the code is already deployed: `sudo systemctl restart kapruka-mcp`.
-5. **Check**: `sudo journalctl -u kapruka-mcp -n 30 | grep -i partner` should show
-   `partners: aloka (1 key(s), scopes: custom_cake, visual_search)` and, after the
-   first request, `activity_log: partner columns present`. Then from anywhere:
-   `curl -si https://mcp.kapruka.com/mcp -H "X-Partner-Key: <KEY>" … initialize …`
-   → `RateLimit-Limit: 600`. The same call without the header → `60`.
+5. **Check by behaviour** — the app's own log lines don't reach journald, so
+   don't look for them there. From the box (not allow-listed, so a fair test),
+   reading the key without printing it:
+   ```bash
+   sudo bash -c 'K=$(cat /root/aloka_partner_key.txt); curl -si https://mcp.kapruka.com/mcp      -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream"      -H "X-Partner-Key: $K" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"check\",\"version\":\"1\"}}}"      | grep -i ratelimit-limit'
+   ```
+   → `RateLimit-Limit: 600`; without the header → `60`. Partner rows then show in
+   `mcp_activity` with `partner = 'aloka'` (timestamp column `ts`).
 
 Rotation: append a second `aloka:sha256:<NEW HASH>` entry (`;`-separated),
 restart, hand over the new key, and remove the old entry once the partner has
