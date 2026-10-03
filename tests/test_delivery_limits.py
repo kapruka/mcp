@@ -230,3 +230,116 @@ def test_other_422_codes_keep_one_line_format():
                                "message": "Jaffnaa is not a delivery city.",
                                "details": {"suggestions": ["Jaffna"]}}})
     assert handle_api_error(err) == "Error (city_not_deliverable): Jaffnaa is not a delivery city."
+
+
+# ── kapruka_check_delivery: the checkout delivery fee (v0.6.0) ───────────────
+# Upstream (commerce_phase1.jsp delivery_check, 2026-10-03) computes the fee
+# the checkout charges: LKR = min(rate + rate_additional, max(300, 25%/50% of
+# the item value)); USD = a fixed per-city fee. `rate` stays the BASE rate.
+
+from src.tools.delivery import DeliveryCartLine
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_forwards_currency_cart_and_other_items():
+    _StubClient.payload = {**_BASE, "available": True}
+    await kapruka_check_delivery(CheckDeliveryInput(
+        city="Welimada", currency="lkr",
+        cart=[DeliveryCartLine(product_id="cake00ka001537", quantity=2, icing_text="Happy"),
+              DeliveryCartLine(product_id="fruits00261")],
+        other_items_total=6000))
+    _, params = _StubClient.calls[-1]
+    assert params["currency"] == "LKR"
+    assert params["cart"] == "cake00ka001537:2:i,fruits00261:1"
+    assert params["other_items_total"] == "6000.00"
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_without_fee_inputs_sends_none_of_them():
+    _StubClient.payload = {**_BASE, "available": True}
+    await kapruka_check_delivery(CheckDeliveryInput(city="Jaffna"))
+    _, params = _StubClient.calls[-1]
+    assert params.get("currency") is None and params.get("cart") is None and params.get("other_items_total") is None
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_exact_fee_for_cart():
+    _StubClient.payload = {**_BASE, "city": "Welimada", "rate": 2400, "available": True,
+                           "delivery_fee": 300, "fee_currency": "LKR", "fee_basis": "cart",
+                           "fee_items_value": 150}
+    out = await kapruka_check_delivery(CheckDeliveryInput(city="Welimada", currency="LKR",
+                                                          cart=[DeliveryCartLine(product_id="grocery00128")]))
+    assert "**Delivery fee for this cart: LKR 300**" in out
+    assert "2,400" not in out and "flat rate" not in out  # the base rate is never shown as the fee
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_max_fee_without_cart():
+    _StubClient.payload = {**_BASE, "city": "Kurunegala", "rate": 1190, "available": True,
+                           "delivery_fee": 1440, "fee_currency": "LKR", "fee_basis": "max"}
+    out = await kapruka_check_delivery(CheckDeliveryInput(city="Kurunegala"))
+    assert "**Delivery fee: up to LKR 1,440**" in out
+    assert "Pass `cart` for the exact fee" in out
+    assert "1,190" not in out
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_fixed_usd_fee():
+    _StubClient.payload = {**_BASE, "city": "Kurunegala", "rate": 1190, "available": True,
+                           "delivery_fee": 8.47, "fee_currency": "USD", "fee_basis": "fixed"}
+    out = await kapruka_check_delivery(CheckDeliveryInput(city="Kurunegala", currency="USD"))
+    assert "**Delivery fee: USD 8.47**" in out
+    assert "whatever the cart" in out
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_cart_error_falls_back_to_max_and_says_why():
+    _StubClient.payload = {**_BASE, "available": True, "delivery_fee": 2500, "fee_currency": "LKR",
+                           "fee_basis": "max", "fee_cart_error": "product not found: nope00001"}
+    out = await kapruka_check_delivery(CheckDeliveryInput(city="Jaffna", cart=[DeliveryCartLine(product_id="nope00001")]))
+    assert "up to LKR 2,500" in out and "could not be priced: product not found: nope00001" in out
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_date_block_shows_fee_on_that_date():
+    _StubClient.payload = {**_BASE, "available": False, "reason": "Slots full", "next_available_date": "2026-09-21",
+                           "delivery_fee": 1250, "fee_currency": "LKR", "fee_basis": "cart"}
+    out = await kapruka_check_delivery(CheckDeliveryInput(city="Jaffna", cart=[DeliveryCartLine(product_id="cake00ka001537")]))
+    assert "Next available date: **2026-09-21**" in out
+    assert "**Delivery fee on that date for this cart: LKR 1,250**" in out
+    assert "Rate when available" not in out
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_item_blocked_shows_no_fee():
+    _StubClient.payload = {**_BASE, "available": False, "item_deliverable": False, "deliverable_cities": COLOMBO,
+                           "delivery_fee": 2500, "fee_currency": "LKR", "fee_basis": "max"}
+    out = await kapruka_check_delivery(CheckDeliveryInput(city="Jaffna", product_id="amrith00100"))
+    assert "is not delivered to Jaffna" in out
+    assert "Delivery fee" not in out
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_old_api_keeps_base_rate_wording():
+    # An API without the fee fields (before the JSP release) renders exactly as v0.5.
+    _StubClient.payload = {**_BASE, "city": "Colombo 03", "rate": 300, "available": True}
+    out = await kapruka_check_delivery(CheckDeliveryInput(city="Colombo 03", currency="LKR",
+                                                          cart=[DeliveryCartLine(product_id="x00001")]))
+    assert "**Available** — flat rate LKR 300" in out
+
+
+@pytest.mark.asyncio
+async def test_check_delivery_json_passes_fee_fields_through():
+    _StubClient.payload = {**_BASE, "available": True, "delivery_fee": 300, "fee_currency": "LKR", "fee_basis": "cart", "fee_items_value": 150}
+    out = json.loads(await kapruka_check_delivery(CheckDeliveryInput(city="Jaffna", response_format="json")))
+    assert out["delivery_fee"] == 300 and out["fee_basis"] == "cart" and out["rate"] == 2500
+
+
+def test_check_delivery_rejects_unsupported_currency():
+    with pytest.raises(Exception):
+        CheckDeliveryInput(city="Jaffna", currency="JPY")
+
+
+def test_cart_line_rejects_odd_product_ids():
+    with pytest.raises(Exception):
+        DeliveryCartLine(product_id="bad id,with:delims")

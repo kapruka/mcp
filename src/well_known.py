@@ -68,9 +68,11 @@ WELL_KNOWN_MCP: dict = {
                 "name": "kapruka_check_delivery",
                 "description": (
                     "Check whether an order can be delivered to a city on a given "
-                    "date and at what flat LKR rate. Pass product_id to also check "
-                    "that item's city limit (food, hotel cakes and liquor reach "
-                    "selected cities only) — available is true only if both pass."
+                    "date, and the delivery fee checkout will charge. Pass currency "
+                    "and the cart for the exact fee (it depends on both). Pass "
+                    "product_id to also check that item's city limit (food, hotel "
+                    "cakes and liquor reach selected cities only) — available is "
+                    "true only if both pass."
                 ),
             },
             {

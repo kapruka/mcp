@@ -164,6 +164,33 @@ async def kapruka_list_delivery_cities(params: ListDeliveryCitiesInput) -> str:
 
 # ── Tool 2: kapruka_check_delivery ────────────────────────────────────────────
 
+# Same currencies the rest of the API prices; the checkout itself charges LKR or
+# USD, so any non-LKR currency gets the USD delivery fee upstream.
+_FEE_CURRENCIES = ("LKR", "USD", "GBP", "AUD", "EUR")
+_MAX_FEE_CART_LINES = 30
+
+
+class DeliveryCartLine(BaseModel):
+    """A catalogue cart line, the same shape kapruka_create_order takes.
+
+    Custom cake lines cannot be priced here; pass the quote's total as
+    `other_items_total` instead.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
+
+    product_id: str = Field(..., min_length=3, max_length=50, pattern=r"^[A-Za-z0-9_\-]+$")
+    quantity: int = Field(default=1, ge=1, le=99)
+    icing_text: Optional[str] = Field(
+        default=None,
+        description="Set when the cake carries icing text — the checkout adds a small charge for it.",
+        max_length=120,
+    )
+
+    def to_token(self) -> str:
+        """`productId:qty[:i]` — the upstream `cart` query format."""
+        return f"{self.product_id}:{self.quantity}" + (":i" if self.icing_text else "")
+
 
 class CheckDeliveryInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -195,10 +222,45 @@ class CheckDeliveryInput(BaseModel):
         ),
         max_length=80,
     )
+    currency: Optional[str] = Field(
+        default=None,
+        description=(
+            "The currency the customer will check out in (LKR or USD; GBP/AUD/EUR check out in USD). "
+            "Decides which delivery fee applies: Sri Lankan customers pay a fee capped by the cart "
+            "value, overseas customers a fixed USD fee. Default LKR."
+        ),
+    )
+    cart: Optional[list[DeliveryCartLine]] = Field(
+        default=None,
+        description=(
+            "The items the customer is buying (product_id, quantity, optional icing_text) — the same "
+            "lines you will send to kapruka_create_order. With it the answer gives the EXACT delivery "
+            "fee checkout will charge; without it, only the most it can be."
+        ),
+        max_length=_MAX_FEE_CART_LINES,
+    )
+    other_items_total: Optional[float] = Field(
+        default=None,
+        description=(
+            "LKR value of items not listed in `cart` (e.g. a quoted custom cake's total). "
+            "Added to the cart value for the fee."
+        ),
+        ge=0,
+    )
     response_format: str = Field(
         default="markdown",
         description="'markdown' (default) or 'json'",
     )
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip().upper()
+        if v not in _FEE_CURRENCIES:
+            raise ValueError(f"currency must be one of: {', '.join(_FEE_CURRENCIES)}")
+        return v
 
     @field_validator("delivery_date")
     @classmethod
@@ -246,11 +308,20 @@ def _perishable_warning(product_id: str, delivery_date_iso: str) -> Optional[str
     },
 )
 async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
-    """Check whether Kapruka can deliver to a given city on a given date, and at what rate.
+    """Check whether Kapruka can deliver to a given city on a given date, and the delivery fee.
 
-    Returns the flat delivery rate (LKR), whether the requested date is available,
-    and — if not — the next available date plus reason. Kapruka delivers as a
-    single shipment per order at one flat rate regardless of item count.
+    Returns whether the requested date is available (if not, the next available
+    date plus reason) and the delivery fee the checkout will charge.
+
+    THE FEE DEPENDS ON THE CART AND THE CURRENCY — the city's base rate is not
+    what checkout charges. Sri Lankan customers (LKR) pay the city rate capped
+    by the cart value (25% of the item value, at least LKR 300; some remote
+    cities 50%), so a small cart to a far city pays far less than the rate.
+    Overseas customers (USD) pay a fixed USD fee per city, whatever the cart.
+    Pass `currency` and the `cart` you are about to order and the answer gives
+    the EXACT fee kapruka_create_order will charge ("Delivery fee for this
+    cart"). Without a cart, an LKR answer gives only the MOST the fee can be
+    ("up to"). One shipment per order: the fee covers the whole cart.
 
     Pass `product_id` whenever the customer has named a product: the answer then
     also checks that ITEM's delivery scope (restaurant food, hotel cakes and
@@ -278,10 +349,13 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
             - city (str): Canonical city name (e.g. 'Colombo 03', 'Galle')
             - delivery_date (Optional[str]): YYYY-MM-DD; defaults to today (LK time)
             - product_id (Optional[str]): Check the city against this item's delivery scope
+            - currency (Optional[str]): LKR (default) or USD/GBP/AUD/EUR (charged in USD)
+            - cart (Optional[list]): [{product_id, quantity, icing_text?}] for the exact fee
+            - other_items_total (Optional[float]): LKR value of items not in `cart` (custom cake quote)
             - response_format (str): 'markdown' (default) or 'json'
 
     Returns:
-        str: Delivery feasibility + rate in the requested format.
+        str: Delivery feasibility + fee in the requested format.
 
         JSON schema:
         {
@@ -289,7 +363,12 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
           "now": str,                       # ISO timestamp, Sri Lanka time
           "checked_date": str,              # YYYY-MM-DD
           "available": bool,                # date open AND (if product_id) item deliverable
-          "rate": number,                   # flat LKR rate per order
+          "delivery_fee": number,           # what checkout charges (see fee_basis)
+          "fee_currency": "LKR" | "USD",
+          "fee_basis": "cart" | "max" | "fixed",  # exact for the cart | LKR without a cart: the most it can be | USD: same for any cart
+          "fee_items_value": number,        # LKR item value the fee was computed from (fee_basis=cart)
+          "fee_cart_error": str,            # the cart could not be priced (fee falls back to max)
+          "rate": number,                   # the city's BASE rate (LKR) — not the checkout fee
           "currency": "LKR",
           "reason": str | null,             # date-block message, else "This item is not delivered to <City>."
           "next_available_date": str|null,  # only for date blocks
@@ -307,6 +386,11 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
             city=params.city,
             delivery_date=target_date,
             product_id=params.product_id,
+            currency=params.currency,
+            cart=",".join(line.to_token() for line in params.cart) if params.cart else None,
+            other_items_total=(
+                f"{params.other_items_total:.2f}" if params.other_items_total else None
+            ),
         )
     except Exception as e:
         return handle_api_error(e)
@@ -331,9 +415,15 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     item_deliverable = data.get("item_deliverable")
     item_blocked = item_deliverable is False
 
+    fee_line = _fee_line(data)
+
     lines = [f"## Delivery to {city} on {checked}"]
     if available:
-        if rate is not None:
+        if fee_line:
+            lines.append("**Available**")
+            lines.append(fee_line)
+        elif rate is not None:
+            # Older API without the checkout fee: the base city rate only.
             lines.append(f"**Available** — flat rate {currency} {rate:,}")
         else:
             lines.append("**Available**")
@@ -366,7 +456,9 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
             lines.append(f"- Next available date: **{next_date}**")
         if item_deliverable is True:
             lines.append(f"- `{params.product_id}` itself can be delivered to {city} — only the date is the issue.")
-        if rate is not None:
+        if fee_line and not item_blocked:
+            lines.append(fee_line.replace("- **Delivery fee", "- **Delivery fee on that date", 1))
+        elif rate is not None and not fee_line:
             lines.append(f"- Rate when available: {currency} {rate:,}")
 
     if warning:
@@ -374,3 +466,33 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
         lines.append(warning)
 
     return "\n".join(lines)
+
+
+def _money(currency: str, amount) -> str:
+    try:
+        value = float(amount)
+    except (TypeError, ValueError):
+        return f"{currency} {amount}"
+    return f"{currency} {value:,.0f}" if currency == "LKR" else f"{currency} {value:,.2f}"
+
+
+def _fee_line(data: dict) -> Optional[str]:
+    """The checkout delivery fee, worded by how exact it is. None when the API
+    predates the fee fields (then the old base-rate wording is kept)."""
+    fee = data.get("delivery_fee")
+    basis = data.get("fee_basis")
+    if fee is None or basis not in ("cart", "max", "fixed"):
+        return None
+    cur = data.get("fee_currency") or "LKR"
+    if basis == "cart":
+        return (f"- **Delivery fee for this cart: {_money(cur, fee)}** — exactly what "
+                f"kapruka_create_order will charge for these items to this city.")
+    if basis == "fixed":
+        return (f"- **Delivery fee: {_money(cur, fee)}** — what checkout charges overseas "
+                f"customers to this city, whatever the cart.")
+    note = ""
+    if data.get("fee_cart_error"):
+        note = f" (The cart could not be priced: {data['fee_cart_error']}.)"
+    return (f"- **Delivery fee: up to {_money(cur, fee)}** — checkout charges less on smaller "
+            f"carts (the fee is capped by the item value, at least LKR 300). Pass `cart` for the "
+            f"exact fee.{note}")
