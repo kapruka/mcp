@@ -461,9 +461,9 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">🚚</div>
         <h3>kapruka_check_delivery</h3>
-        <p>Check whether an order can be delivered to a city on a given date, with the flat LKR rate. Pass <code>product_id</code> to also check that item's city limit — food, hotel cakes and liquor reach selected cities only — and get the deliverable cities back when it doesn't.</p>
+        <p>Check whether an order can be delivered to a city on a given date, and the delivery fee checkout will charge. The fee depends on the cart and the currency: pass <code>currency</code> and the <code>cart</code> you are about to order for the exact fee. Pass <code>product_id</code> to also check that item's city limit — food, hotel cakes and liquor reach selected cities only — and get the deliverable cities back when it doesn't.</p>
         <div class="params">
-          <code>city</code><code>delivery_date</code><code>product_id</code>
+          <code>city</code><code>delivery_date</code><code>product_id</code><code>currency</code><code>cart</code><code>other_items_total</code>
         </div>
       </div>
 
