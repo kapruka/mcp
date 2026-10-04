@@ -13,9 +13,11 @@ llms.txt or the MCP registry, and callable only from VISUAL_SEARCH_TRUSTED_IPS
 (default: the trusted tier, i.e. the eagle box running Kapruka's sales agent)
 or by a partner key granted the `visual_search` group (src/partners.py).
 
-Upstream contract: eagle-dashboard/docs/visual-search-cache.md. Eagle itself
-only accepts calls from this MCP host's IP plus an X-API-Key, so the key never
-leaves the server. Prices come back in LKR only; we convert with Kapruka's own
+Upstream contract: eagle-dashboard/docs/visual-search-cache.md. Since
+2026-10-04 the API runs on its own server, https://visual.kapruka.com (behind
+Cloudflare; EAGLE_VS_URL), not via Eagle. It accepts the MCP's `mcp` key only
+from this host's IP (Cloudflare CF-Connecting-IP), so the key is useless off
+this box — and if the MCP ever moves host, that pin must move too. Prices come back in LKR only; we convert with Kapruka's own
 rate (src/fx.py) so they match what the checkout charges.
 """
 

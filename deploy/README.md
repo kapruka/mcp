@@ -62,6 +62,13 @@ landing page, llms.txt, version bump, `scripts/publish-registry.sh`).
 eagle-dashboard box), `TRUSTED_PROXIES=127.0.0.1,::1`, `ACTIVITY_DB_URL`
 (Postgres on eagle). See `src/config/settings.py` for defaults.
 
+Visual search (private tool): `EAGLE_VS_URL` =
+`https://visual.kapruka.com/api/vs/search` (its own server since 2026-10-04;
+the old `https://eagle.lanka.info/api/vs/search` proxy is the rollback, kept
+commented in `.env`), `EAGLE_VS_API_KEY`, optional `EAGLE_VS_TIMEOUT` (5 s).
+The key is pinned to this host's IP on the visual-search side — **if the MCP
+moves host, have that pin updated first**, or every visual search returns 401.
+
 Trusted partners (key-based access, e.g. aloka): `PARTNER_KEYS`,
 `PARTNER_SCOPES`, optional `PARTNER_LIMITS` and `PARTNER_*_LIMIT_*` defaults —
 see [docs/PARTNER_ACCESS.md](../docs/PARTNER_ACCESS.md).
