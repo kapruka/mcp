@@ -19,10 +19,16 @@ Cloudflare; EAGLE_VS_URL), not via Eagle. It accepts the MCP's `mcp` key only
 from this host's IP (Cloudflare CF-Connecting-IP), so the key is useless off
 this box — and if the MCP ever moves host, that pin must move too. Prices come back in LKR only; we convert with Kapruka's own
 rate (src/fx.py) so they match what the checkout charges.
+
+On-sale rows are repriced from the commerce API (`product`). Their LKR figure is
+the Doofinder feed's sale_price, which Kapruka rounds differently from the cart
+(130,500 vs 130,000; Kapruka's reply of 2026-10-05: "treat it as approximate").
+The API runs the cart's own discount code, so its price is what checkout charges.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -32,11 +38,12 @@ import httpx
 from mcp.server.fastmcp import Context
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src.api.client import KaprukaClient
 from src.config.settings import settings
 from src.fx import lkr_per_unit
 from src.private_access import is_trusted_caller
 from src.server import mcp
-from src.tools.products import SUPPORTED_CURRENCIES, _validate_query
+from src.tools.products import SUPPORTED_CURRENCIES, _discount_pct, _validate_query
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +55,11 @@ _FALL_BACK = "Use kapruka_search_products for this request instead."
 
 # Tests swap in an httpx.MockTransport here; production uses the default.
 _TRANSPORT: Optional[httpx.AsyncBaseTransport] = None
+
+# Repricing on-sale rows: at most this many product lookups per answer, all
+# concurrent, and never more than this long added to the answer.
+_REPRICE_MAX = 12
+_REPRICE_TIMEOUT = 3.0
 
 
 class VisualSearchInput(BaseModel):
@@ -213,6 +225,44 @@ def _row(r: dict, rate: float, currency: str) -> dict:
     return out
 
 
+async def _reprice_sales(rows: list[dict], currency: str) -> None:
+    """Replace the feed's approximate sale price with the checkout price.
+
+    Only rows the feed marks as on sale. A row we could not reprice keeps the
+    feed figure and is flagged `price_approximate`.
+    """
+    sale = [r for r in rows if r["compare_at_price"] and r.get("id")]
+    for r in sale:
+        r["price_approximate"] = True
+    if not sale:
+        return
+    client = KaprukaClient()
+
+    async def one(r: dict) -> None:
+        try:
+            d = await client.call("product", product_id=r["id"], currency=currency)
+        except Exception as e:
+            logger.info("visual_search: reprice %s failed (%s)", r["id"], type(e).__name__)
+            return
+        price = d.get("price") or {}
+        if price.get("amount") is None:
+            return
+        compare = d.get("compare_at_price") or {}
+        r["price"] = {"amount": price["amount"], "currency": price.get("currency") or currency}
+        r["compare_at_price"] = (
+            {"amount": compare["amount"], "currency": compare.get("currency") or currency}
+            if compare.get("amount") is not None and compare["amount"] > price["amount"] else None
+        )
+        del r["price_approximate"]
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*(one(r) for r in sale[:_REPRICE_MAX])), _REPRICE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.info("visual_search: repricing timed out; feed prices kept where unanswered")
+
+
 @mcp.tool(
     name="kapruka_visual_search",
     annotations={
@@ -247,8 +297,12 @@ async def kapruka_visual_search(params: VisualSearchInput, ctx: Context) -> str:
     ordering. `stands_in_for` marks a near-identical product shown in place of a
     sold-out one.
 
-    Prices are converted from LKR at Kapruka's own rate, so they match the site;
-    min_price/max_price are in the requested `currency` too.
+    Prices are what checkout charges: on-sale items are repriced from Kapruka's
+    product record (discount applied, `compare_at_price` = pre-discount price), and
+    the rest are converted from LKR at Kapruka's own rate. A row with
+    `price_approximate: true` could not be repriced — confirm its price with
+    kapruka_get_product before quoting it. min_price/max_price are in the
+    requested `currency`.
 
     Args:
         params (VisualSearchInput): q, category, limit (1–50), page (1–10), currency,
@@ -262,6 +316,7 @@ async def kapruka_visual_search(params: VisualSearchInput, ctx: Context) -> str:
           "results": [{"id", "name", "url", "image_url",
                        "price": {"amount", "currency"},
                        "compare_at_price": {"amount", "currency"} | null,   # set when on sale
+                       "price_approximate"?: true,   # on sale, not repriced: confirm first
                        "brand", "categories": [str], "summary": str,
                        "has_variants": bool, "stands_in_for"?: str}],
           "total": int, "page": int, "limit": int, "next_page": int | null,
@@ -332,6 +387,7 @@ async def kapruka_visual_search(params: VisualSearchInput, ctx: Context) -> str:
         return str(e)
 
     rows = [_row(r, rate, currency) for r in data.get("results") or [] if isinstance(r, dict)]
+    await _reprice_sales(rows, currency)
     categories = [
         {"name": c.get("name"), "count": c.get("count")}
         for c in data.get("categories") or [] if isinstance(c, dict) and c.get("name")
@@ -393,8 +449,12 @@ async def kapruka_visual_search(params: VisualSearchInput, ctx: Context) -> str:
     lines.append("")
     for i, r in enumerate(rows, 1 + (page - 1) * limit):
         price = _fmt(r["price"]["amount"], currency)
-        if r["compare_at_price"]:
-            price += f" (was {_fmt(r['compare_at_price']['amount'], currency)})"
+        if r.get("price_approximate"):
+            price = f"about {price} on sale (confirm the price with kapruka_get_product before quoting)"
+        elif r["compare_at_price"]:
+            price += f" (was {_fmt(r['compare_at_price']['amount'], currency)}"
+            pct = _discount_pct(r["price"], r["compare_at_price"])
+            price += f", {pct}% off)" if pct else ")"
         extras = []
         if r["has_variants"]:
             extras.append("has size/option variants — check kapruka_get_product before ordering")

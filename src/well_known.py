@@ -39,13 +39,16 @@ WELL_KNOWN_MCP: dict = {
                 "description": (
                     "Search the Kapruka catalog by keyword with optional category "
                     "facet, price range (in the requested currency), stock, and sort "
-                    "filters. Every response lists the category facets for the query."
+                    "filters. Prices are what checkout charges (website discounts "
+                    "applied; compare_at_price = pre-discount price). Every response "
+                    "lists the category facets for the query."
                 ),
             },
             {
                 "name": "kapruka_get_product",
                 "description": (
-                    "Fetch full details for a single product by ID — name, price, "
+                    "Fetch full details for a single product by ID — name, price "
+                    "(discounted, with compare_at_price when on sale), "
                     "stock, variants, images, shipping, delivery scope "
                     "(island-wide vs selected cities only), and a direct URL."
                 ),

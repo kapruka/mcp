@@ -4,6 +4,7 @@ Eagle is stubbed with an httpx.MockTransport; response shapes follow
 eagle-dashboard/docs/visual-search-cache.md (verified live 2026-09-26).
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -63,9 +64,32 @@ class Eagle:
         })
 
 
+class Api:
+    """Stands in for the commerce API's `product` lookup used to reprice sale rows."""
+
+    calls: list[dict] = []
+    prices: dict = {"FLOWERS00T1182": (1300, 1500)}   # id -> (checkout price, pre-discount)
+    fail: bool = False
+    delay: float = 0.0
+
+    async def call(self, endpoint, **kw):
+        Api.calls.append({"endpoint": endpoint, **kw})
+        if Api.delay:
+            await asyncio.sleep(Api.delay)
+        if Api.fail:
+            raise RuntimeError("upstream down")
+        now, was = Api.prices[kw["product_id"]]
+        cur = kw.get("currency", "LKR")
+        k = 1.0 if cur == "LKR" else 270.0
+        return {"id": kw["product_id"], "price": {"amount": round(now / k, 2), "currency": cur},
+                "compare_at_price": {"amount": round(was / k, 2), "currency": cur} if was else None}
+
+
 @pytest.fixture(autouse=True)
 def _setup(monkeypatch):
     Eagle.requests, Eagle.status, Eagle.headers, Eagle.raise_exc = [], 200, {}, None
+    Api.calls, Api.fail, Api.delay = [], False, 0.0
+    monkeypatch.setattr(vs, "KaprukaClient", Api)
     monkeypatch.setattr(vs, "_TRANSPORT", httpx.MockTransport(Eagle.handler))
     monkeypatch.setattr(settings, "eagle_vs_url", URL)
     monkeypatch.setattr(settings, "eagle_vs_api_key", "test-key")
@@ -155,9 +179,60 @@ async def test_usd_bounds_go_to_eagle_in_lkr_and_prices_come_back_in_usd():
 
 
 @pytest.mark.asyncio
-async def test_sale_price_shown_with_was_price():
+async def test_sale_row_is_repriced_from_the_api_with_was_price():
+    # Feed says 1,350; the cart (and so the API) charges 1,300.
     out = await _run()
-    assert "LKR 1,350 (was LKR 1,500)" in out
+    assert "LKR 1,300 (was LKR 1,500, 13% off)" in out
+    assert "1,350" not in out
+    assert Api.calls == [{"endpoint": "product", "product_id": "FLOWERS00T1182", "currency": "LKR"}]
+
+
+@pytest.mark.asyncio
+async def test_only_sale_rows_are_repriced_and_json_carries_checkout_price():
+    out = json.loads(await _run(response_format="json"))
+    by_id = {r["id"]: r for r in out["results"]}
+    assert by_id["FLOWERS00T1182"]["price"] == {"amount": 1300, "currency": "LKR"}
+    assert by_id["FLOWERS00T1182"]["compare_at_price"] == {"amount": 1500, "currency": "LKR"}
+    assert "price_approximate" not in by_id["FLOWERS00T1182"]
+    assert by_id["FLOWERS00T1828"]["price"]["amount"] == 5940
+    assert [c["product_id"] for c in Api.calls] == ["FLOWERS00T1182"]
+
+
+@pytest.mark.asyncio
+async def test_reprice_asks_in_the_requested_currency():
+    out = await _run(currency="USD")
+    assert Api.calls[0]["currency"] == "USD"
+    assert "USD 4.81 (was USD 5.56, 13% off)" in out
+
+
+@pytest.mark.asyncio
+async def test_reprice_failure_keeps_feed_price_flagged_approximate():
+    Api.fail = True
+    out = await _run()
+    assert "about LKR 1,350 on sale (confirm the price with kapruka_get_product" in out
+    js = json.loads(await _run(response_format="json"))
+    row = next(r for r in js["results"] if r["id"] == "FLOWERS00T1182")
+    assert row["price_approximate"] is True and row["price"]["amount"] == 1350
+
+
+@pytest.mark.asyncio
+async def test_reprice_is_time_boxed(monkeypatch):
+    monkeypatch.setattr(vs, "_REPRICE_TIMEOUT", 0.05)
+    Api.delay = 1.0
+    out = await _run()
+    assert "The Rose Edit Bouquet" in out
+    assert "about LKR 1,350 on sale" in out
+
+
+@pytest.mark.asyncio
+async def test_api_no_longer_discounting_drops_the_was_price():
+    Api.prices = {"FLOWERS00T1182": (1500, None)}
+    try:
+        js = json.loads(await _run(response_format="json"))
+    finally:
+        Api.prices = {"FLOWERS00T1182": (1300, 1500)}
+    row = next(r for r in js["results"] if r["id"] == "FLOWERS00T1182")
+    assert row["price"]["amount"] == 1500 and row["compare_at_price"] is None
 
 
 @pytest.mark.asyncio

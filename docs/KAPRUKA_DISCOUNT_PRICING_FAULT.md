@@ -1,5 +1,17 @@
 # Fault: the commerce API ignores website discounts, so agent orders charge full price
 
+> **Resolved 2026-10-05.** Kapruka (Gayathri) fixed it the same day: the API now
+> calls the cart's own discount method (`productPromotionsBean.getDiscountDetails`)
+> wherever it prices a product. Verified on production: product/variants/USD,
+> search bounds, the `delivery_check` fee value and `create_order` all use the
+> discounted price. Their answer to the question below: the cart's number is
+> authoritative; the feed `sale_price` is a Doofinder figure with different
+> rounding, so treat it as approximate. MCP 0.6.1 shows the discount (was-price
+> and % off) and reprices visual search's on-sale rows from the API.
+> `discount_percent` / `discount_ends_at` are not in the API yet; corporate-account
+> discounts are deliberately not applied (agent calls carry no company profile).
+> Unpaid `create_order` sessions just expire, so the test order needs no cancelling.
+
 **To the Kapruka API team. From the MCP side, 2026-10-05.** Everything below was
 measured on production that day. All calls are read-only except one test checkout,
 which was left unpaid and is marked "TEST – do not fulfil".

@@ -425,7 +425,7 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">🔍</div>
         <h3>kapruka_search_products</h3>
-        <p>Search the catalog by keyword with category, price range, stock, and sort filters. Price bounds are in the currency you ask for, and every response lists the category facets you can narrow by. Pagination capped at 3 pages.</p>
+        <p>Search the catalog by keyword with category, price range, stock, and sort filters. Prices are what checkout charges, with website discounts applied and the pre-discount price alongside. Price bounds are in the currency you ask for, and every response lists the category facets you can narrow by. Pagination capped at 3 pages.</p>
         <div class="params">
           <code>q</code><code>category</code><code>min_price</code><code>max_price</code><code>in_stock_only</code><code>sort</code><code>limit</code><code>cursor</code><code>currency</code>
         </div>
@@ -434,7 +434,7 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">📦</div>
         <h3>kapruka_get_product</h3>
-        <p>Full details for any product by ID — name, price, stock, variants, images, shipping, delivery scope (island-wide, or the selected cities a food / hotel cake / liquor item can reach), and a direct URL.</p>
+        <p>Full details for any product by ID — name, price (discounted, with the was-price when on sale), stock, variants, images, shipping, delivery scope (island-wide, or the selected cities a food / hotel cake / liquor item can reach), and a direct URL.</p>
         <div class="params">
           <code>product_id</code><code>currency</code>
         </div>

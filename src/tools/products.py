@@ -84,6 +84,31 @@ def _fmt_price(price: dict | None) -> str:
     return f"{currency} {amount:,.2f}"
 
 
+def _discount_pct(price: dict | None, compare: dict | None) -> int | None:
+    """Whole percent off, rounded down so we never overstate a discount.
+
+    Kapruka's API carries the discount as price (charged) + compare_at_price
+    (pre-discount), from the same code the website cart uses (2026-10-05).
+    """
+    try:
+        now, was = float(price["amount"]), float(compare["amount"])
+    except (TypeError, KeyError, ValueError):
+        return None
+    if was <= 0 or now >= was:
+        return None
+    return int((was - now) * 100 // was) or None
+
+
+def _fmt_sale(item: dict) -> str:
+    """'LKR 2,250 (was LKR 3,250, 30% off)', or just the price when not discounted."""
+    price, compare = item.get("price"), item.get("compare_at_price")
+    out = _fmt_price(price)
+    pct = item.get("discount_percent") or _discount_pct(price, compare)
+    if compare and compare.get("amount") and pct:
+        out += f" (was {_fmt_price(compare)}, {pct:g}% off)"
+    return out
+
+
 def _stock_label(item: dict) -> str:
     if not item.get("in_stock"):
         return "Out of stock"
@@ -176,6 +201,10 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     Returns name, description, price (with optional currency conversion), stock status,
     images, variants, shipping info, delivery scope, and a direct product URL.
 
+    Discounts: `price` is what checkout charges, with any website discount already
+    applied; `compare_at_price` is the pre-discount price when one applies (null
+    otherwise). Each variant carries its own pair. Quote `price`.
+
     Delivery scope: most gifts ship island-wide, but restaurant food, hotel cakes
     and liquor only reach a limited city set (typically the Colombo area). The
     `delivery` object is the authority — search results do NOT carry it. When
@@ -262,7 +291,8 @@ async def kapruka_get_product(params: GetProductInput) -> str:
 
     compare = data.get("compare_at_price")
     if compare and compare.get("amount"):
-        lines.append(f"**Was**: ~~{_fmt_price(compare)}~~")
+        pct = data.get("discount_percent") or _discount_pct(data.get("price"), compare)
+        lines.append(f"**Was**: ~~{_fmt_price(compare)}~~" + (f" ({pct:g}% off)" if pct else ""))
 
     lines.append(f"**Stock**: {_stock_label(data)}")
 
@@ -295,7 +325,7 @@ async def kapruka_get_product(params: GetProductInput) -> str:
         lines.append("**Variants:**")
         for v in variants:
             lines.append(
-                f"- {v.get('name')} — {_fmt_price(v.get('price'))} — {_stock_label(v)}"
+                f"- {v.get('name')} — {_fmt_sale(v)} — {_stock_label(v)}"
             )
 
     images = data.get("images", [])
@@ -482,7 +512,8 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
     check the product names actually contain it before presenting them.
 
     Prices and min_price/max_price are both in `currency` — pass the customer's own budget
-    in their own currency; do not convert it.
+    in their own currency; do not convert it. A row's `price` is the discounted price
+    checkout charges (the bounds filter on it); `compare_at_price` is set when on sale.
 
     Search results carry NO delivery-scope information. Food, hotel cakes and liquor
     are delivered only to selected cities — never infer deliverability from a search
@@ -634,7 +665,7 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
 
     for i, r in enumerate(results, 1):
         rid = r.get("id", "")
-        price_str = _fmt_price(r.get("price"))
+        price_str = _fmt_sale(r)
         stock_str = _stock_label(r)
         intl = " · ships internationally" if r.get("ships_internationally") else ""
         lines.append(f"**{i}. {r.get('name')}**")
