@@ -75,7 +75,8 @@ WELL_KNOWN_MCP: dict = {
                     "and the cart for the exact fee (it depends on both). Pass "
                     "product_id to also check that item's city limit (food, hotel "
                     "cakes and liquor reach selected cities only) — available is "
-                    "true only if both pass."
+                    "true only if both pass. With the cart it also shows the "
+                    "cheaper economy delivery option when it saves real money."
                 ),
             },
             {
@@ -84,7 +85,8 @@ WELL_KNOWN_MCP: dict = {
                     "Create a guest-checkout order and return a click-to-pay URL. "
                     "No Kapruka account required; prices locked for 60 minutes. "
                     "Rejected (nothing created) with city_not_deliverable_for_item "
-                    "when any cart item cannot reach the delivery city."
+                    "when any cart item cannot reach the delivery city. "
+                    "delivery.type: 'standard' (default) or 'economy'."
                 ),
             },
             {

@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.api.client import KaprukaClient, handle_api_error
+from src.economy import ECONOMY_DAYS_AHEAD, economy_date
 from src.server import mcp
 
 # The five the Kapruka API actually prices. CAD was advertised here until
@@ -153,6 +154,23 @@ class Delivery(BaseModel):
         description="Free-form delivery instructions.",
         max_length=250,
     )
+    type: str = Field(
+        default="standard",
+        description=(
+            "'standard' (default) or 'economy' — the cheaper courier option. Send 'economy' only "
+            "when kapruka_check_delivery (with the cart) showed it and the customer chose it, or "
+            "said the items go by economy only. Economy orders are dated "
+            f"{ECONOMY_DAYS_AHEAD} days ahead for you; `date` is then ignored."
+        ),
+    )
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        v = v.lower()
+        if v not in ("standard", "economy"):
+            raise ValueError("delivery.type must be 'standard' or 'economy'")
+        return v
 
     @field_validator("location_type")
     @classmethod
@@ -280,7 +298,7 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
               deliverable to delivery.city. Only place a custom cake order after the customer clearly
               accepted the quoted total.
             - recipient (Recipient): name + phone (E.164 +9477… or local 077…)
-            - delivery (Delivery): address, city (must be Kapruka-deliverable — use kapruka_list_delivery_cities), location_type (house/apartment/office/other, default house), date (YYYY-MM-DD, today-or-future Asia/Colombo), optional instructions
+            - delivery (Delivery): address, city (must be Kapruka-deliverable — use kapruka_list_delivery_cities), location_type (house/apartment/office/other, default house), date (YYYY-MM-DD, today-or-future Asia/Colombo), optional instructions, type ('standard' default | 'economy')
             - sender (Sender): name + anonymous flag
             - gift_message (Optional[str]): Up to 300 chars
             - currency (str): LKR (default), USD, GBP, AUD, EUR
@@ -299,7 +317,10 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
             "delivery_fee":  number,
             "addons_total":  number,
             "grand_total":   number,     # items_total + delivery_fee + addons_total
-            "currency":      str
+            "currency":      str,
+            "delivery_type": "standard" | "economy",
+            "delivery_date": str,        # the date checkout will use — may differ from the one sent
+            "delivery_promise": str      # economy only: quote as given
           },
           "expires_at": str              # ISO 8601 — link stops working after this
         }
@@ -316,6 +337,15 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
         quoted cake total by a few rupees (USD round-trip) — quote the summary
         numbers when asking for payment.
 
+        economy_not_available (HTTP 422): economy was requested but this order
+        cannot go economy. Nothing is created. Tell the customer it goes by
+        standard delivery (fee from kapruka_check_delivery) and, once they agree,
+        resend with delivery.type 'standard' and their date.
+
+        Economy-only items always go economy, even when 'standard' is sent; read
+        summary.delivery_type and summary.delivery_date and tell the customer the
+        date checkout will use.
+
         city_not_deliverable_for_item (HTTP 422): at least one cart item (food /
         hotel cake / liquor) cannot reach delivery.city. NOTHING is created — the
         API never places a partial order and neither should you. The error text
@@ -325,12 +355,19 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
         the same city. Avoid this entirely by calling kapruka_check_delivery with
         `product_id` for each limited item before ordering.
     """
+    delivery = params.delivery.model_dump(exclude_none=True)
+    if delivery.get("type") == "economy":
+        # Economy is promised as "within N days", not for a chosen date: we
+        # date it ECONOMY_DAYS_AHEAD days out; the API moves it later if needed.
+        delivery["date"] = economy_date()
+    else:
+        delivery.pop("type", None)  # 'standard' is the API default
     body: dict = {
         "auth_token": None,
         "idempotency_key": str(uuid.uuid4()),
         "cart": [item.to_api() for item in params.cart],
         "recipient": params.recipient.model_dump(),
-        "delivery": params.delivery.model_dump(exclude_none=True),
+        "delivery": delivery,
         "sender": params.sender.model_dump(),
     }
     if params.gift_message:
@@ -344,7 +381,16 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
             currency=params.currency,
         )
     except Exception as e:
-        return handle_api_error(e)
+        err = handle_api_error(e)
+        if err.startswith("Error (economy_not_available)"):
+            # No reasons (policy): just what to do next.
+            return (
+                "Error (economy_not_available): economy delivery is not available for this "
+                "order. Nothing was created. Offer the customer standard delivery (fee from "
+                "kapruka_check_delivery) and, once they agree, resend with delivery.type "
+                "'standard' and their chosen date."
+            )
+        return err
 
     if params.response_format == "json":
         return json.dumps(data, indent=2, ensure_ascii=False)
@@ -369,6 +415,22 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
     if summary.get("addons_total"):
         lines.append(f"| Addons | {_fmt_total(summary.get('addons_total'), currency)} |")
     lines.append("")
+
+    used_date = summary.get("delivery_date") or delivery["date"]
+    if summary.get("delivery_type") == "economy":
+        promise = (summary.get("delivery_promise") or "").rstrip(".")
+        lines.append(
+            f"**Delivery:** economy — {promise + '; ' if promise else ''}expected by {used_date}."
+        )
+        if params.delivery.type != "economy":
+            lines.append(
+                "_These items go by economy delivery only, so checkout uses economy and this "
+                "date. Tell the customer._"
+            )
+        lines.append("")
+    elif used_date != params.delivery.date:
+        lines.append(f"**Delivery date:** {used_date} (checkout moved it from {params.delivery.date} — tell the customer).")
+        lines.append("")
 
     if checkout_url:
         lines.append(f"**[Open checkout to pay]({checkout_url})**")

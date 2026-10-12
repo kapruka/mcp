@@ -109,6 +109,19 @@ def _fmt_sale(item: dict) -> str:
     return out
 
 
+# product.economy_delivery (2026-10-12) describes the item alone; whether an
+# order is offered economy depends on the whole cart, city and message, which
+# kapruka_check_delivery works out.
+_ECONOMY_LINES = {
+    "optional": "possible for this item (cheaper courier, a few days) — "
+                "kapruka_check_delivery with the cart shows whether it is offered.",
+    "only": "the only option for this item — delivered within 1 to 3 days by courier, "
+            "not on a chosen date.",
+    "only_5to7": "the only option for this item — delivered within 5 to 7 days by courier, "
+                 "not on a chosen date.",
+}
+
+
 def _stock_label(item: dict) -> str:
     if not item.get("in_stock"):
         return "Out of stock"
@@ -200,6 +213,10 @@ async def kapruka_get_product(params: GetProductInput) -> str:
 
     Returns name, description, price (with optional currency conversion), stock status,
     images, variants, shipping info, delivery scope, and a direct product URL.
+
+    `economy_delivery` ("optional" | "only" | "only_5to7" | null) says whether the
+    item can go by the cheaper economy courier; kapruka_check_delivery with the
+    cart says whether an order is offered it.
 
     Discounts: `price` is what checkout charges, with any website discount already
     applied; `compare_at_price` is the pre-discount price when one applies (null
@@ -313,6 +330,9 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     delivery_line = describe_delivery(data.get("delivery"))
     if delivery_line:
         lines.append(f"**Delivery**: {delivery_line}")
+    economy_line = _ECONOMY_LINES.get(data.get("economy_delivery"))
+    if economy_line:
+        lines.append(f"**Economy delivery**: {economy_line}")
 
     lines.append("")
     summary = data.get("summary") or data.get("description", "")

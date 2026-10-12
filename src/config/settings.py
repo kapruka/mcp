@@ -49,6 +49,10 @@ class Settings:
     eagle_vs_url: str = os.getenv("EAGLE_VS_URL", "")
     eagle_vs_api_key: str = os.getenv("EAGLE_VS_API_KEY", "")
     eagle_vs_timeout: float = float(os.getenv("EAGLE_VS_TIMEOUT", "5"))
+    # Economy delivery (2026-10-12): an optional economy choice is shown only
+    # when it saves at least this much on the order. Economy-only orders are
+    # always shown — there is no choice to make.
+    economy_min_saving_lkr: float = float(os.getenv("ECONOMY_MIN_SAVING_LKR", "50"))
     visual_search_trusted_ips: list[str] = _csv(
         "VISUAL_SEARCH_TRUSTED_IPS", _csv("RATE_LIMIT_EXEMPT_IPS", [])
     )

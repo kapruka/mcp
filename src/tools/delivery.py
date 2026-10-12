@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.client import KaprukaClient, handle_api_error
 from src.delivery_scope import fmt_city_list
+from src.economy import economy_offer
 from src.server import mcp
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -247,6 +248,14 @@ class CheckDeliveryInput(BaseModel):
         ),
         ge=0,
     )
+    gift_message: Optional[str] = Field(
+        default=None,
+        description=(
+            "The gift message you will send to kapruka_create_order, if any. Pass it with "
+            "`cart` so the economy delivery option is worked out the way checkout will."
+        ),
+        max_length=300,
+    )
     response_format: str = Field(
         default="markdown",
         description="'markdown' (default) or 'json'",
@@ -341,6 +350,16 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     offer `next_available_date`. Do not interpret the `reason` text (it is the
     website's wording and may say slots are full when the real cause is the cutoff).
 
+    ECONOMY DELIVERY (cheaper courier, a few days instead of a chosen date) is
+    worked out from the `cart` (and `gift_message`, which you should pass when
+    there is one). When the answer shows an economy option, offer it to the
+    customer as the cheaper choice, quoting its fee, promise wording and
+    "expected by" date as given; if they take it, call kapruka_create_order with
+    `delivery.type: "economy"` (the order is dated for you). When the answer says
+    the order goes by economy delivery, that is the ONLY option for these items:
+    tell the customer and order with `delivery.type: "economy"`. When economy is
+    not shown, do not mention it.
+
     Perishable codes (CAKE*, FLOWER*, COMBO*) additionally get a freshness
     warning when the chosen delivery date is more than 1 day out.
 
@@ -352,6 +371,7 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
             - currency (Optional[str]): LKR (default) or USD/GBP/AUD/EUR (charged in USD)
             - cart (Optional[list]): [{product_id, quantity, icing_text?}] for the exact fee
             - other_items_total (Optional[float]): LKR value of items not in `cart` (custom cake quote)
+            - gift_message (Optional[str]): the order's gift message, for the economy rule
             - response_format (str): 'markdown' (default) or 'json'
 
     Returns:
@@ -374,7 +394,15 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
           "next_available_date": str|null,  # only for date blocks
           "item_deliverable": bool,         # only when product_id resolved to a real product
           "deliverable_cities": [str],      # only when item_deliverable=false (capped at 60)
-          "perishable_warning": str | null  # populated when product_id is perishable
+          "perishable_warning": str | null, # populated when product_id is perishable
+          "economy": {                      # only with `cart`
+            "available": bool,              # false: say nothing about economy
+            "forced": bool,                 # true: economy is the ONLY option
+            "fee": number, "currency": "LKR",
+            "promise": str,                 # quote as given
+            "delivery_date": str,           # "expected by" date; create_order uses it
+            "saving": number | null         # vs the standard fee
+          }
         }
     """
     target_date = params.delivery_date or _today_lk()
@@ -391,9 +419,12 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
             other_items_total=(
                 f"{params.other_items_total:.2f}" if params.other_items_total else None
             ),
+            gift_message=params.gift_message if params.cart else None,
         )
     except Exception as e:
         return handle_api_error(e)
+
+    economy = economy_offer(data)
 
     warning = None
     if _is_perishable(params.product_id):
@@ -402,6 +433,9 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     if params.response_format == "json":
         out = dict(data)
         out["perishable_warning"] = warning
+        if "economy" in out:
+            # Our policy, not the API's raw block: no reasons, no tiny savings.
+            out["economy"] = {"available": True, **economy} if economy else {"available": False}
         return json.dumps(out, indent=2, ensure_ascii=False)
 
     # ── Markdown
@@ -416,19 +450,24 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     item_blocked = item_deliverable is False
 
     fee_line = _fee_line(data)
+    forced = bool(economy and economy["forced"])
+    if forced:
+        # Economy-only: the standard fee is not what checkout will charge.
+        fee_line = None
 
     lines = [f"## Delivery to {city} on {checked}"]
     if available:
         if fee_line:
             lines.append("**Available**")
             lines.append(fee_line)
-        elif rate is not None:
+        elif rate is not None and not forced:
             # Older API without the checkout fee: the base city rate only.
             lines.append(f"**Available** — flat rate {currency} {rate:,}")
         else:
             lines.append("**Available**")
         if item_deliverable is True:
             lines.append(f"- `{params.product_id}` can be delivered to {city}.")
+        lines.extend(_economy_lines(economy))
     else:
         if item_blocked:
             # Item scope beats the date: a new date won't help, a new city will.
@@ -458,14 +497,44 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
             lines.append(f"- `{params.product_id}` itself can be delivered to {city} — only the date is the issue.")
         if fee_line and not item_blocked:
             lines.append(fee_line.replace("- **Delivery fee", "- **Delivery fee on that date", 1))
-        elif rate is not None and not fee_line:
+        elif rate is not None and not fee_line and not forced:
             lines.append(f"- Rate when available: {currency} {rate:,}")
+        if not item_blocked:
+            lines.extend(_economy_lines(economy))
 
     if warning:
         lines.append("")
         lines.append(warning)
 
     return "\n".join(lines)
+
+
+def _economy_lines(economy: Optional[dict]) -> list[str]:
+    if not economy:
+        return []
+    fee = _money(economy["currency"], economy["fee"])
+    promise = economy["promise"].rstrip(".")
+    when = f"{promise}; expected by {_fmt_day(economy['delivery_date'])}" if promise         else f"expected by {_fmt_day(economy['delivery_date'])}"
+    if economy["forced"]:
+        return [
+            f"- **These items go by economy delivery: {fee}** — {when}.",
+            "- Economy is the only option for this cart: tell the customer, and call "
+            "kapruka_create_order with `delivery.type: \"economy\"` (it sets the date).",
+        ]
+    saving = f" (saves {_money(economy['currency'], economy['saving'])})" if economy.get("saving") else ""
+    return [
+        f"- **Cheaper option — economy delivery: {fee}**{saving} — {when}.",
+        "- Offer both. If the customer chooses economy, call kapruka_create_order with "
+        "`delivery.type: \"economy\"` (it sets the date).",
+    ]
+
+
+def _fmt_day(iso: str) -> str:
+    try:
+        d = Date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    return f"{d.strftime('%a')} {d.day} {d.strftime('%b')} ({iso})"
 
 
 def _money(currency: str, amount) -> str:

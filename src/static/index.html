@@ -461,16 +461,16 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">🚚</div>
         <h3>kapruka_check_delivery</h3>
-        <p>Check whether an order can be delivered to a city on a given date, and the delivery fee checkout will charge. The fee depends on the cart and the currency: pass <code>currency</code> and the <code>cart</code> you are about to order for the exact fee. Pass <code>product_id</code> to also check that item's city limit — food, hotel cakes and liquor reach selected cities only — and get the deliverable cities back when it doesn't.</p>
+        <p>Check whether an order can be delivered to a city on a given date, and the delivery fee checkout will charge. The fee depends on the cart and the currency: pass <code>currency</code> and the <code>cart</code> you are about to order for the exact fee. Pass <code>product_id</code> to also check that item's city limit — food, hotel cakes and liquor reach selected cities only — and get the deliverable cities back when it doesn't. With the cart it also shows the cheaper <strong>economy delivery</strong> option (a courier, a few days) when it saves the customer real money.</p>
         <div class="params">
-          <code>city</code><code>delivery_date</code><code>product_id</code><code>currency</code><code>cart</code><code>other_items_total</code>
+          <code>city</code><code>delivery_date</code><code>product_id</code><code>currency</code><code>cart</code><code>other_items_total</code><code>gift_message</code>
         </div>
       </div>
 
       <div class="tool">
         <div class="icon">🛒</div>
         <h3>kapruka_create_order</h3>
-        <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP. Refused (nothing created) with <code>city_not_deliverable_for_item</code> when any cart item can't reach the delivery city.</p>
+        <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP. Refused (nothing created) with <code>city_not_deliverable_for_item</code> when any cart item can't reach the delivery city. <code>delivery.type</code> picks <code>standard</code> (default) or <code>economy</code> delivery.</p>
         <div class="params">
           <code>cart</code><code>recipient</code><code>delivery</code><code>sender</code><code>gift_message</code><code>currency</code>
         </div>
