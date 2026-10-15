@@ -7,6 +7,7 @@ Usage:
     python cli.py server --stdio  # Start with stdio transport (for MCP Inspector)
     python cli.py ping            # Health-check the upstream Kapruka REST API
     python cli.py tools           # List all registered MCP tools
+    python cli.py ucp-profile     # Print the UCP business profile (/.well-known/ucp)
 """
 
 import argparse
@@ -69,6 +70,12 @@ def cmd_tools(_args: argparse.Namespace) -> None:
             print(f"    {first_line}")
 
 
+def cmd_ucp_profile(_args: argparse.Namespace) -> None:
+    from src.ucp.profile import profile_json
+
+    sys.stdout.write(profile_json())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="kapruka-cli",
@@ -87,6 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tools = sub.add_parser("tools", help="List all registered MCP tools")
     p_tools.set_defaults(func=cmd_tools)
+
+    p_ucp = sub.add_parser("ucp-profile", help="Print the UCP business profile for kapruka.com/.well-known/ucp")
+    p_ucp.set_defaults(func=cmd_ucp_profile)
 
     return parser
 

@@ -41,3 +41,6 @@ scripts/api_responses.json
 *.pem
 *.key
 _p2token.txt
+
+# UCP checkout sessions (src/ucp/store.py)
+data/

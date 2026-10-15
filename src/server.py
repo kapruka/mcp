@@ -7,6 +7,7 @@ Transport: streamable HTTP, fronted by Caddy at https://mcp.kapruka.com.
 
 import logging
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -120,6 +121,30 @@ def build_app() -> Starlette:
     app.router.routes.insert(3, Route("/cards/{name}", _card, methods=["GET"]))
     app.router.routes.insert(3, Route("/.well-known/mcp.json", well_known_mcp, methods=["GET"]))
     app.router.routes.insert(4, Route("/.well-known/mcp.json", well_known_mcp_options, methods=["OPTIONS"]))
+
+    # ── UCP (Universal Commerce Protocol), Level 1 — src/ucp. Its own MCP
+    # server at /ucp/mcp (stateless) and REST at /ucp/v1; the profile is also
+    # mirrored at /.well-known/ucp (the canonical copy is on kapruka.com).
+    if settings.ucp_enabled:
+        from src.ucp import transport_mcp, transport_rest
+        from src.ucp.profile import well_known_ucp
+
+        ucp_manager = transport_mcp.new_session_manager()
+        app.router.routes[5:5] = [
+            Route("/.well-known/ucp", well_known_ucp, methods=["GET"]),
+            Route("/ucp/mcp", transport_mcp.ASGIApp(ucp_manager), methods=["GET", "POST", "DELETE"]),
+            *transport_rest.ROUTES,
+        ]
+        mcp_lifespan = app.router.lifespan_context
+
+        @asynccontextmanager
+        async def lifespan(a):
+            async with mcp_lifespan(a) as state:
+                async with ucp_manager.run():
+                    yield state
+
+        app.router.lifespan_context = lifespan
+        logger.info("UCP: enabled (/ucp/v1, /ucp/mcp)")
 
     # ── Activity logging (optional — disabled when ACTIVITY_DB_URL unset).
     # The middleware lazy-inits the pool on first request, so no lifespan plumbing.

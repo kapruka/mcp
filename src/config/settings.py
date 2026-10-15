@@ -53,6 +53,17 @@ class Settings:
     # when it saves at least this much on the order. Economy-only orders are
     # always shown — there is no choice to make.
     economy_min_saving_lkr: float = float(os.getenv("ECONOMY_MIN_SAVING_LKR", "50"))
+
+    # ── UCP (Universal Commerce Protocol), Level 1: checkout hands the buyer to
+    # Kapruka's own pay page via continue_url. The business profile is hosted
+    # on kapruka.com/.well-known/ucp; the endpoints live here, under /ucp.
+    ucp_enabled: bool = _bool("UCP_ENABLED", True)
+    ucp_public_base: str = os.getenv("UCP_PUBLIC_BASE", "https://mcp.kapruka.com")
+    ucp_db_path: str = os.getenv("UCP_DB_PATH", "data/ucp.sqlite3")
+    # Kapruka checkout links (create_order) minted per client IP per hour.
+    ucp_mint_per_hour: int = int(os.getenv("UCP_MINT_PER_HOUR", "30"))
+    # Test/dev only: allow http:// and private-address agent profile URLs.
+    ucp_allow_insecure_profiles: bool = _bool("UCP_ALLOW_INSECURE_PROFILES", False)
     visual_search_trusted_ips: list[str] = _csv(
         "VISUAL_SEARCH_TRUSTED_IPS", _csv("RATE_LIMIT_EXEMPT_IPS", [])
     )
