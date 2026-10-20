@@ -65,7 +65,15 @@ mcp = FastMCP(
         "5. Search results carry no delivery info — resolve it per item via "
         "kapruka_get_product or kapruka_check_delivery.\n"
         "6. Send canonical city spellings from kapruka_list_delivery_cities / "
-        "deliverable_cities."
+        "deliverable_cities.\n\n"
+        "INTERNATIONAL GIFTS — when the RECIPIENT is outside Sri Lanka (USA, UK, Canada, "
+        "Australia, UAE, ...): call kapruka_gift_countries, then "
+        "kapruka_gift_country_products(country) and choose from the whole store (these "
+        "products are not in kapruka_search_products). They are delivered in that "
+        "country by Kapruka's partner: one delivery fee per order, Australia/UAE only "
+        "to listed zones, earliest date 3 days ahead. Order with kapruka_create_order "
+        "delivery.type 'international_gift' (+ country, zone, zip); one country per "
+        "order, never mixed with Sri Lanka items."
     ),
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=settings.enable_dns_rebinding_protection,
@@ -78,6 +86,7 @@ mcp = FastMCP(
 from src.tools import cards, categories, customers, delivery, orders, products  # noqa: F401, E402
 from src.tools import custom_cakes  # noqa: F401, E402  (after customers: shares _HIDDEN_TOOLS)
 from src.tools import visual_search  # noqa: F401, E402  (private; additional to Doofinder search)
+from src.tools import international  # noqa: F401, E402  (international gift stores)
 from src.cards import card_path  # noqa: E402
 
 

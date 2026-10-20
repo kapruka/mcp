@@ -34,6 +34,10 @@ def describe_delivery(delivery: dict[str, Any] | None) -> str | None:
     """One-line markdown for a product's `delivery` object; None if absent."""
     if not isinstance(delivery, dict):
         return None
+    if delivery.get("international"):
+        # International gift store product (2026-10-19): delivered in its country.
+        return (f"International gift — delivered in {delivery.get('country') or 'its store country'} "
+                "by Kapruka's partner, not in Sri Lanka.")
     if delivery.get("island_wide"):
         return "Island-wide"
     count = delivery.get("deliverable_city_count")

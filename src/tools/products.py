@@ -218,6 +218,10 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     item can go by the cheaper economy courier; kapruka_check_delivery with the
     cart says whether an order is offered it.
 
+    International gift store products carry `international_gift` {"country", "orderable",
+    "store_url"}: they are delivered IN that country by Kapruka's partner (see
+    kapruka_gift_countries), not in Sri Lanka.
+
     Discounts: `price` is what checkout charges, with any website discount already
     applied; `compare_at_price` is the pre-discount price when one applies (null
     otherwise). Each variant carries its own pair. Quote `price`.
@@ -333,6 +337,16 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     economy_line = _ECONOMY_LINES.get(data.get("economy_delivery"))
     if economy_line:
         lines.append(f"**Economy delivery**: {economy_line}")
+    gift = data.get("international_gift")
+    if isinstance(gift, dict) and gift.get("country"):
+        lines.append(
+            f"**International gift**: delivered in {gift['country']} only"
+            + ("" if gift.get("orderable", True) else " — the store is closed, cannot be ordered now")
+            + ". Delivery fee (one per order; zones in Australia/UAE) and the earliest date: "
+            "kapruka_gift_countries or kapruka_check_delivery(product_id, zone). Order with "
+            "kapruka_create_order delivery.type \"international_gift\" + country/zone/zip; "
+            "quantity 1; not with Sri Lanka items."
+        )
 
     lines.append("")
     summary = data.get("summary") or data.get("description", "")
@@ -532,7 +546,8 @@ async def kapruka_search_products(params: SearchProductsInput) -> str:
     check the product names actually contain it before presenting them.
 
     Prices and min_price/max_price are both in `currency` — pass the customer's own budget
-    in their own currency; do not convert it. A row's `price` is the discounted price
+    in their own currency; do not convert it. Gifts for recipients OUTSIDE Sri Lanka are not
+    in this search: use kapruka_gift_countries / kapruka_gift_country_products. A row's `price` is the discounted price
     checkout charges (the bounds filter on it); `compare_at_price` is set when on sale.
 
     Search results carry NO delivery-scope information. Food, hotel cakes and liquor

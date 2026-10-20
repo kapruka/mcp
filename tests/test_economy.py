@@ -236,7 +236,7 @@ async def test_economy_refusal_hides_the_reason():
 
 
 def test_unknown_delivery_type_is_rejected_before_the_api():
-    with pytest.raises(Exception, match="standard' or 'economy"):
+    with pytest.raises(Exception, match="'standard', 'economy' or 'international_gift'"):
         _order(type="express")
 
 

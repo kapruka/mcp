@@ -470,9 +470,27 @@ Auth:        None</code></pre>
       <div class="tool">
         <div class="icon">🛒</div>
         <h3>kapruka_create_order</h3>
-        <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP. Refused (nothing created) with <code>city_not_deliverable_for_item</code> when any cart item can't reach the delivery city. <code>delivery.type</code> picks <code>standard</code> (default) or <code>economy</code> delivery.</p>
+        <p>Create a guest-checkout order and return a click-to-pay URL — no Kapruka account required. Prices are locked for 60 minutes, multi-currency, capped at 30 orders/hr per IP. Refused (nothing created) with <code>city_not_deliverable_for_item</code> when any cart item can't reach the delivery city. <code>delivery.type</code> picks <code>standard</code> (default), <code>economy</code>, or <code>international_gift</code> for a recipient abroad.</p>
         <div class="params">
           <code>cart</code><code>recipient</code><code>delivery</code><code>sender</code><code>gift_message</code><code>currency</code>
+        </div>
+      </div>
+
+      <div class="tool">
+        <div class="icon">🌍</div>
+        <h3>kapruka_gift_countries</h3>
+        <p>International gifts: the countries Kapruka delivers gifts <em>in</em> through local partners (USA, Canada, Australia, UK, UAE, ...), with gifts in stock, the delivery fee per order, delivery zones and the earliest date.</p>
+        <div class="params">
+          <code>currency</code>
+        </div>
+      </div>
+
+      <div class="tool">
+        <div class="icon">🎁</div>
+        <h3>kapruka_gift_country_products</h3>
+        <p>Every gift in stock in one country's store, grouped by type. Order with <code>kapruka_create_order</code> and <code>delivery.type</code> <code>international_gift</code>.</p>
+        <div class="params">
+          <code>country</code><code>type</code><code>currency</code>
         </div>
       </div>
 

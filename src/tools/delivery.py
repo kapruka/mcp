@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.api.client import KaprukaClient, handle_api_error
 from src.delivery_scope import fmt_city_list
 from src.economy import economy_offer
+from src.intl_gifts import match_zone
 from src.server import mcp
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -196,14 +197,23 @@ class DeliveryCartLine(BaseModel):
 class CheckDeliveryInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    city: str = Field(
-        ...,
+    city: Optional[str] = Field(
+        default=None,
         description=(
-            "Canonical city name (use kapruka_list_delivery_cities to find one). "
-            "Examples: 'Colombo 03', 'Anuradhapura', 'Galle'."
+            "Canonical Sri Lanka city name (use kapruka_list_delivery_cities to find one). "
+            "Examples: 'Colombo 03', 'Anuradhapura', 'Galle'. Required, except for "
+            "international gift store products (their country comes from the item)."
         ),
         min_length=2,
         max_length=100,
+    )
+    zone: Optional[str] = Field(
+        default=None,
+        description=(
+            "International gifts only: the recipient's zone in Australia or the UAE, "
+            "from kapruka_gift_countries (e.g. 'Dubai', 'Dandenong')."
+        ),
+        max_length=60,
     )
     delivery_date: Optional[str] = Field(
         default=None,
@@ -363,9 +373,16 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
     Perishable codes (CAKE*, FLOWER*, COMBO*) additionally get a freshness
     warning when the chosen delivery date is more than 1 day out.
 
+    INTERNATIONAL GIFTS (store products from kapruka_gift_country_products): pass
+    product_id or cart (no city needed) and, for Australia / the UAE, `zone`. The
+    answer is that country's delivery: available or not, the fee for the whole order,
+    and the earliest date (3 days ahead; used when delivery_date is omitted).
+
     Args:
         params (CheckDeliveryInput):
-            - city (str): Canonical city name (e.g. 'Colombo 03', 'Galle')
+            - city (str): Canonical city name (e.g. 'Colombo 03', 'Galle'); not needed for
+              international gift store products
+            - zone (Optional[str]): international gifts in Australia / the UAE
             - delivery_date (Optional[str]): YYYY-MM-DD; defaults to today (LK time)
             - product_id (Optional[str]): Check the city against this item's delivery scope
             - currency (Optional[str]): LKR (default) or USD/GBP/AUD/EUR (charged in USD)
@@ -405,14 +422,15 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
           }
         }
     """
+    if not params.city and not params.product_id and not params.cart:
+        return "Error: city is required (or pass product_id / cart for an international gift)."
     target_date = params.delivery_date or _today_lk()
 
-    try:
-        client = KaprukaClient()
-        data = await client.call(
+    async def check(zone: Optional[str], date: Optional[str]) -> dict:
+        return await KaprukaClient().call(
             "delivery_check",
             city=params.city,
-            delivery_date=target_date,
+            delivery_date=date,
             product_id=params.product_id,
             currency=params.currency,
             cart=",".join(line.to_token() for line in params.cart) if params.cart else None,
@@ -420,7 +438,24 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
                 f"{params.other_items_total:.2f}" if params.other_items_total else None
             ),
             gift_message=params.gift_message if params.cart else None,
+            zone=zone,
         )
+
+    try:
+        data = await check(params.zone, target_date)
+        gift = data.get("international_gift")
+        if isinstance(gift, dict):
+            # Store products: their own date rule (earliest = today + 3), so a
+            # defaulted "today" would only ever say no. Kapruka matches zone names
+            # exactly; map loose input ("abu dhabi") to the one listed zone.
+            date = params.delivery_date or gift.get("earliest_date")
+            zone = params.zone
+            hit = match_zone(params.zone, gift.get("zones") or []) if params.zone else None
+            if hit and hit["name"] != params.zone:
+                zone = hit["name"]
+            if zone != params.zone or date != target_date:
+                data = await check(zone, date)
+            return _international_answer(data, params, zone)
     except Exception as e:
         return handle_api_error(e)
 
@@ -506,6 +541,38 @@ async def kapruka_check_delivery(params: CheckDeliveryInput) -> str:
         lines.append("")
         lines.append(warning)
 
+    return "\n".join(lines)
+
+
+def _international_answer(data: dict, params: "CheckDeliveryInput", zone: Optional[str]) -> str:
+    gift = data.get("international_gift") or {}
+    country = gift.get("country") or "its store country"
+    where = f"{zone}, {country}" if zone and gift.get("zone_required") else country
+    date = data.get("checked_date") or params.delivery_date
+    if params.response_format == "json":
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    lines = [f"## International gift delivery — {where}" + (f" on {date}" if date else "")]
+    if data.get("available"):
+        cur = data.get("fee_currency") or data.get("currency") or "LKR"
+        lines.append(f"**Available** — delivery fee **{_money(cur, data.get('delivery_fee'))}** for the "
+                     "whole order, exactly what kapruka_create_order will charge.")
+        lines.append("- Delivered by Kapruka's partner there, not from Sri Lanka.")
+    else:
+        lines.append("**Not available.**")
+        if data.get("reason"):
+            lines.append(f"- {data['reason']}")
+        nxt = data.get("next_available_date")
+        if nxt:
+            lines.append(f"- Earliest delivery date: **{nxt}**")
+        zones = [z.get("name") for z in gift.get("zones") or [] if isinstance(z, dict)]
+        if gift.get("zone_required") and zones:
+            lines.append(f"- {country} delivers ONLY to: {', '.join(zones)}. Ask which one the recipient "
+                         "is in; if theirs is not listed, Kapruka cannot deliver there.")
+    if gift.get("earliest_date"):
+        lines.append(f"- Earliest possible date: {gift['earliest_date']} (3 days ahead).")
+    lines.append("- Order with kapruka_create_order delivery.type \"international_gift\" "
+                 f"(country \"{country}\"" + (f", zone \"{zone}\"" if zone and gift.get("zone_required") else "")
+                 + ", zip, quantity 1 per line).")
     return "\n".join(lines)
 
 

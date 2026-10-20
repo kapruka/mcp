@@ -131,8 +131,9 @@ class Delivery(BaseModel):
     city: str = Field(
         ...,
         description=(
-            "Must be a Kapruka delivery city (canonical name from "
-            "kapruka_list_delivery_cities) that EVERY cart item can reach. The order "
+            "Sri Lanka orders: a Kapruka delivery city (canonical name from "
+            "kapruka_list_delivery_cities) that EVERY cart item can reach. International "
+            "gifts: the recipient's city/town abroad, as written. The order "
             "ships as one shipment, so food / hotel cake / liquor items restrict the "
             "whole cart to their city set — verify with kapruka_check_delivery"
             "(city, product_id) first; otherwise the order is rejected with "
@@ -154,9 +155,28 @@ class Delivery(BaseModel):
         description="Free-form delivery instructions.",
         max_length=250,
     )
+    country: Optional[str] = Field(
+        default=None,
+        description="International gifts only (required): the store country from kapruka_gift_countries.",
+        max_length=60,
+    )
+    zone: Optional[str] = Field(
+        default=None,
+        description="International gifts only: required for Australia and the UAE — one of that "
+                    "country's listed zones (kapruka_gift_countries).",
+        max_length=60,
+    )
+    zip: Optional[str] = Field(
+        default=None,
+        description="International gifts only (required): the recipient's postcode / ZIP.",
+        min_length=1,
+        max_length=35,
+    )
     type: str = Field(
         default="standard",
         description=(
+            "'international_gift' for products from kapruka_gift_country_products (recipient "
+            "abroad; needs country, zip, zone where listed; date >= 3 days ahead). Otherwise "
             "'standard' (default) or 'economy' — the cheaper courier option. Send 'economy' only "
             "when kapruka_check_delivery (with the cart) showed it and the customer chose it, or "
             "said the items go by economy only. Economy orders are dated "
@@ -168,9 +188,20 @@ class Delivery(BaseModel):
     @classmethod
     def validate_type(cls, v: str) -> str:
         v = v.lower()
-        if v not in ("standard", "economy"):
-            raise ValueError("delivery.type must be 'standard' or 'economy'")
+        if v not in ("standard", "economy", "international_gift"):
+            raise ValueError("delivery.type must be 'standard', 'economy' or 'international_gift'")
         return v
+
+    @model_validator(mode="after")
+    def check_international(self):
+        if self.type == "international_gift":
+            missing = [f for f in ("country", "zip") if not getattr(self, f)]
+            if missing:
+                raise ValueError(
+                    "delivery." + " and delivery.".join(missing) + " required for international_gift")
+        elif self.country or self.zone:
+            raise ValueError("delivery.country / delivery.zone are only for delivery.type 'international_gift'")
+        return self
 
     @field_validator("location_type")
     @classmethod
@@ -199,6 +230,12 @@ class Sender(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str = Field(..., description="Sender name on the gift card.", min_length=1, max_length=80)
+    email: Optional[str] = Field(
+        default=None,
+        description="Sender's email (international gifts: send it when you have it).",
+        max_length=120,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    )
     anonymous: bool = Field(
         default=False,
         description="If true, gift card shows 'Anonymous' instead of the sender name.",
@@ -259,6 +296,53 @@ def _fmt_total(amount, currency: str) -> str:
     if currency == "LKR":
         return f"LKR {amount:,.0f}"
     return f"{currency} {amount:,.2f}"
+
+
+async def _prepare_international(params: "CreateOrderInput", delivery: dict) -> Optional[str]:
+    """Check an international gift order before Kapruka sees it, and normalise
+    country and zone to the listed names. Returns an error string, or None.
+
+    Kapruka's rules (2026-10-13): one store country per order, no Sri Lanka items
+    or custom cakes, quantity 1 per line, zone required for Australia / the UAE
+    (exact listed name), date on or after today + 3 (Sri Lanka).
+    """
+    from src import intl_gifts as ig
+
+    if any(i.custom_cake_request_id for i in params.cart):
+        return ("Error (international_gift_mixed_cart): a custom cake cannot be in an international "
+                "gift order. Order it separately. Nothing was created.")
+    over = [i.product_id for i in params.cart if (i.quantity or 1) > 1]
+    if over:
+        return ("Error (product_out_of_stock): international gift products are 1 per line ("
+                + ", ".join(over) + "). Set quantity 1. Nothing was created.")
+    try:
+        rows = await ig.countries(params.currency)
+    except Exception as e:
+        return handle_api_error(e)
+    row = ig.match_country(delivery.get("country"), rows)
+    if row is None:
+        return (f"Error (country_not_available): no gift store for '{delivery.get('country')}'. "
+                "Stores: " + ", ".join(r["country"] for r in rows) + ". Nothing was created.")
+    delivery["country"] = row["country"]
+    zones = row.get("zones") or []
+    if row.get("zone_required"):
+        hit = ig.match_zone(delivery.get("zone"), zones)
+        if hit is None:
+            listed = ", ".join(z["name"] for z in zones)
+            given = (f"'{delivery.get('zone')}' is not one of them" if delivery.get("zone")
+                     else "delivery.zone is required")
+            return (f"Error (invalid_parameter): {row['country']} delivers only to these zones: {listed}; "
+                    f"{given}. Ask the customer which zone the recipient is in; if it is not listed, "
+                    "Kapruka cannot deliver there. Nothing was created.")
+        delivery["zone"] = hit["name"]
+    else:
+        delivery.pop("zone", None)
+    earliest = ig.earliest_date(row)
+    if delivery["date"] < earliest:
+        return (f"Error (date_not_deliverable): international gifts can be delivered from {earliest} "
+                f"(3 days ahead). Ask the customer for a date on or after {earliest}. Nothing was created.")
+    delivery.pop("location_type", None)   # not used for these orders
+    return None
 
 
 # ── Tool ─────────────────────────────────────────────────────────────────────
@@ -356,7 +440,16 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
         `product_id` for each limited item before ordering.
     """
     delivery = params.delivery.model_dump(exclude_none=True)
-    if delivery.get("type") == "economy":
+    sender = params.sender.model_dump(exclude_none=True)
+    if delivery.get("type") == "international_gift":
+        problem = await _prepare_international(params, delivery)
+        if problem:
+            return problem
+    else:
+        sender.pop("email", None)   # only the international order form takes it
+    if delivery.get("type") == "international_gift":
+        pass   # dated by the customer (>= earliest), sent as is
+    elif delivery.get("type") == "economy":
         # Economy is promised as "within N days", not for a chosen date: we
         # date it ECONOMY_DAYS_AHEAD days out; the API moves it later if needed.
         delivery["date"] = economy_date()
@@ -368,7 +461,7 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
         "cart": [item.to_api() for item in params.cart],
         "recipient": params.recipient.model_dump(),
         "delivery": delivery,
-        "sender": params.sender.model_dump(),
+        "sender": sender,
     }
     if params.gift_message:
         body["gift_message"] = params.gift_message
@@ -417,7 +510,13 @@ async def kapruka_create_order(params: CreateOrderInput) -> str:
     lines.append("")
 
     used_date = summary.get("delivery_date") or delivery["date"]
-    if summary.get("delivery_type") == "economy":
+    if delivery.get("type") == "international_gift":
+        where = ", ".join(x for x in (summary.get("zone") or delivery.get("zone"),
+                                      summary.get("country") or delivery.get("country")) if x)
+        lines.append(f"**Delivery:** international gift — delivered in {where} on {used_date} "
+                     "by Kapruka's partner there.")
+        lines.append("")
+    elif summary.get("delivery_type") == "economy":
         promise = (summary.get("delivery_promise") or "").rstrip(".")
         lines.append(
             f"**Delivery:** economy — {promise + '; ' if promise else ''}expected by {used_date}."

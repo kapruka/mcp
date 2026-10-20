@@ -224,7 +224,7 @@ async def test_invalid_missing_or_empty_key_behaves_as_public(stubs, key):
         r = await s.open(ip=PUBLIC_IP, key=key)
         assert r.headers["ratelimit-limit"] == "60"
         r, names = await s.tools(ip=PUBLIC_IP, key=key)
-        assert r.status_code == 200 and len(names) == 8 and HIDDEN_VS not in names
+        assert r.status_code == 200 and len(names) == 10 and HIDDEN_VS not in names
         _, text = await s.call(HIDDEN_VS, {"q": "red roses"}, ip=PUBLIC_IP, key=key)
         assert "private MCP" in text
 
@@ -355,7 +355,7 @@ async def test_eagle_ip_path_is_unchanged(stubs):
         r = await s.open(ip=EAGLE)
         assert r.headers["ratelimit-limit"] == "600"
         _, names = await s.tools(ip=EAGLE)
-        assert len(names) == 8 and HIDDEN_VS not in names, "Eagle calls hidden tools by name, as before"
+        assert len(names) == 10 and HIDDEN_VS not in names, "Eagle calls hidden tools by name, as before"
         _, text = await s.call(HIDDEN_VS, {"q": "red roses"}, ip=EAGLE)
         assert "Rose Bouquet" in text
         _, text = await s.call("kapruka_custom_cake_options", {}, ip=EAGLE)

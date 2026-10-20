@@ -20,8 +20,10 @@ _JSP_PATH_PHASE3 = "/tools/commerce_phase3.jsp"
 
 # Endpoints served by commerce_phase2.jsp (customer-scoped, bearer-authed).
 _PHASE2_ENDPOINTS = {"customer_details", "order_history", "customer_addresses"}
-# Endpoints served by commerce_phase3.jsp (custom cakes; separate agent token).
-_PHASE3_ENDPOINTS = {"custom_cake_options", "custom_cake_request", "custom_cake_status"}
+# Endpoints served by commerce_phase3.jsp (custom cakes, international gift
+# stores; separate agent token).
+_PHASE3_ENDPOINTS = {"custom_cake_options", "custom_cake_request", "custom_cake_status",
+                     "gift_countries", "gift_country_products"}
 
 # Per-endpoint cache TTLs (seconds). 0 = uncached.
 _TTL_BY_ENDPOINT: dict[str, float] = {

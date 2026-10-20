@@ -86,7 +86,24 @@ WELL_KNOWN_MCP: dict = {
                     "No Kapruka account required; prices locked for 60 minutes. "
                     "Rejected (nothing created) with city_not_deliverable_for_item "
                     "when any cart item cannot reach the delivery city. "
-                    "delivery.type: 'standard' (default) or 'economy'."
+                    "delivery.type: 'standard' (default), 'economy', or "
+                    "'international_gift' for recipients abroad."
+                ),
+            },
+            {
+                "name": "kapruka_gift_countries",
+                "description": (
+                    "International gifts: the countries Kapruka delivers gifts IN (USA, "
+                    "Canada, Australia, UK, UAE, ...) via local partners — gifts in stock, "
+                    "delivery fee per order, delivery zones, earliest date."
+                ),
+            },
+            {
+                "name": "kapruka_gift_country_products",
+                "description": (
+                    "International gifts: every gift in stock in one country's store, "
+                    "grouped by type, with prices. Order with kapruka_create_order "
+                    "delivery.type 'international_gift'."
                 ),
             },
             {
