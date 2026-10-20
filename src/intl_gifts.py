@@ -136,12 +136,24 @@ def match_country(name: Optional[str], rows: list[dict]) -> Optional[dict]:
     return next((r for r in rows if r["country"] == alias), None) if alias else None
 
 
-def match_zone(name: Optional[str], zones: list[dict]) -> Optional[dict]:
-    """The listed zone for loose input, only when exactly one zone matches."""
+def zone_names(zones) -> list[str]:
+    """Zone names from either shape: delivery_check lists names, gift_countries
+    lists {"name", "delivery_fee"}."""
+    out = []
+    for z in zones or []:
+        n = z.get("name") if isinstance(z, dict) else z
+        if isinstance(n, str) and n.strip():
+            out.append(n)
+    return out
+
+
+def match_zone(name: Optional[str], zones) -> Optional[dict]:
+    """The listed zone ({"name", ...}) for loose input, only when exactly one matches."""
     if not name:
         return None
     s = _squash(name)
-    hits = [z for z in zones if isinstance(z, dict) and z.get("name") and _squash(z["name"]) == s]
+    hits = [z if isinstance(z, dict) else {"name": z} for z in zones or []
+            if (z.get("name") if isinstance(z, dict) else z) and _squash(z.get("name") if isinstance(z, dict) else z) == s]
     return hits[0] if len(hits) == 1 else None
 
 

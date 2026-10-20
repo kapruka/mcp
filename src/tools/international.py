@@ -221,7 +221,7 @@ async def kapruka_gift_country_products(params: GiftCountryProductsInput) -> str
 
     lines = [
         f"## Kapruka gifts delivered in {row['country']} ({len(items)})",
-        f"{ig.fee_text(row).capitalize()}. Earliest delivery {ig.fmt_day(ig.earliest_date(row))}. "
+        f"{ig.fee_text(row)[:1].upper()}{ig.fee_text(row)[1:]}. Earliest delivery {ig.fmt_day(ig.earliest_date(row))}. "
         "Delivered by Kapruka's partner there.",
     ]
     if row.get("zone_required"):

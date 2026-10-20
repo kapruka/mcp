@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.api.client import KaprukaClient, handle_api_error
 from src.delivery_scope import fmt_city_list
 from src.economy import economy_offer
-from src.intl_gifts import match_zone
+from src.intl_gifts import match_zone, zone_names
 from src.server import mcp
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -564,7 +564,7 @@ def _international_answer(data: dict, params: "CheckDeliveryInput", zone: Option
         nxt = data.get("next_available_date")
         if nxt:
             lines.append(f"- Earliest delivery date: **{nxt}**")
-        zones = [z.get("name") for z in gift.get("zones") or [] if isinstance(z, dict)]
+        zones = zone_names(gift.get("zones"))
         if gift.get("zone_required") and zones:
             lines.append(f"- {country} delivers ONLY to: {', '.join(zones)}. Ask which one the recipient "
                          "is in; if theirs is not listed, Kapruka cannot deliver there.")

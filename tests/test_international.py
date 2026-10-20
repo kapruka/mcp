@@ -94,7 +94,7 @@ class Api:
                     "economy_delivery": None, "shipping": {"ships_from": "AE"}}
         if endpoint == "delivery_check":
             gift = {"country": "UAE", "zone": p.get("zone"), "zone_required": True,
-                    "zones": [{"name": z["name"]} for z in COUNTRIES[2]["zones"]], "earliest_date": _in(3)}
+                    "zones": [z["name"] for z in COUNTRIES[2]["zones"]], "earliest_date": _in(3)}
             listed = {z["name"].lower() for z in COUNTRIES[2]["zones"]}
             date = p.get("delivery_date")
             if not p.get("zone") or p["zone"].lower() not in listed:
@@ -184,6 +184,7 @@ async def test_store_listing_grouped_by_type_with_clean_text():
     assert "`intGift00931` **Birthday Rocher Bouquet** — USD 120.00 — Offer your loved ones a sweet surprise." in out
     assert "`" + "Offer" not in out
     assert "Ask which listed zone" in out
+    assert "Delivers ONLY to these zones (fee per order): Abu-Dhabi USD 40.68" in out
 
 
 @pytest.mark.asyncio
@@ -211,7 +212,7 @@ async def test_product_shows_international_not_sri_lanka_cities():
     out = await kapruka_get_product(GetProductInput(product_id="intGift00931"))
     assert "International gift — delivered in UAE" in out
     assert "**International gift**: delivered in UAE only" in out
-    assert "Selected cities only" not in out
+    assert "Selected cities only" not in out and "International shipping" not in out
 
 
 # ── delivery check ──────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.client import KaprukaClient, handle_api_error
 from src.delivery_scope import describe_delivery
+from src.intl_gifts import clean_text
 from src.server import mcp
 
 logger = logging.getLogger(__name__)
@@ -327,9 +328,10 @@ async def kapruka_get_product(params: GetProductInput) -> str:
     if attrs.get("weight"):
         lines.append(f"**Weight**: {attrs['weight']} lbs")
 
-    shipping = data.get("shipping", {})
-    intl = "Yes" if shipping.get("ships_internationally") else "No"
-    lines.append(f"**International shipping**: {intl}")
+    if not data.get("international_gift"):
+        shipping = data.get("shipping", {})
+        intl = "Yes" if shipping.get("ships_internationally") else "No"
+        lines.append(f"**International shipping**: {intl}")
 
     delivery_line = describe_delivery(data.get("delivery"))
     if delivery_line:
@@ -349,7 +351,7 @@ async def kapruka_get_product(params: GetProductInput) -> str:
         )
 
     lines.append("")
-    summary = data.get("summary") or data.get("description", "")
+    summary = clean_text(data.get("summary") or data.get("description", ""))
     if summary:
         lines.append(summary[:400].strip())
 
