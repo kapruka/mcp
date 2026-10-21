@@ -98,8 +98,14 @@ async def _health(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+_activity_log = None   # set in build_app when ACTIVITY_DB_URL is configured
+
+
 async def _stats(_request: Request) -> JSONResponse:
-    return JSONResponse({"cache": cache.stats()})
+    out = {"cache": cache.stats()}
+    if _activity_log is not None:
+        out["activity_log"] = _activity_log.stats()
+    return JSONResponse(out)
 
 
 _CARD_NAME_RE = re.compile(r"^[a-f0-9]{16}\.jpg$")
@@ -158,7 +164,8 @@ def build_app() -> Starlette:
     # ── Activity logging (optional — disabled when ACTIVITY_DB_URL unset).
     # The middleware lazy-inits the pool on first request, so no lifespan plumbing.
     if settings.activity_db_url:
-        activity_log = ActivityLogger(settings.activity_db_url)
+        global _activity_log
+        activity_log = _activity_log = ActivityLogger(settings.activity_db_url)
         app.add_middleware(
             ActivityLogMiddleware,
             log=activity_log,

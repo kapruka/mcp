@@ -47,6 +47,14 @@ _INSERT_SQL = _insert_sql(_BASE_COLUMNS)
 
 _TRUNCATE_ARGS_BYTES = 4096
 _QUEUE_MAX = 2000
+# Self-healing (2026-10-21: one reset connection silently stopped all logging
+# for 26 hours while the MCP kept serving). Every wait is bounded, the writer is
+# restarted if it ever stops, and the pool is rebuilt after repeated failures.
+_ACQUIRE_TIMEOUT = 10.0
+_CONNECT_TIMEOUT = 15.0
+_REBUILD_AFTER_FAILURES = 3
+_INIT_RETRY_SECONDS = 60.0
+_MAX_BACKOFF = 30.0
 
 
 # ── Logger / queue / worker ──────────────────────────────────────────────────
@@ -60,7 +68,13 @@ class ActivityLogger:
         self._worker: Optional[asyncio.Task] = None
         self._init_lock: Optional[asyncio.Lock] = None
         self._init_done = False
+        self._init_retry_at = 0.0
         self._dropped = 0
+        self._inserted = 0
+        self._failures = 0
+        self._rebuilds = 0
+        self._worker_restarts = 0
+        self._last_ok: Optional[float] = None
         self._columns: tuple[str, ...] = _BASE_COLUMNS
         self._sql = _INSERT_SQL
 
@@ -72,42 +86,77 @@ class ActivityLogger:
         handlers fails. Init-on-first-request is simple and correct.
         """
         if self._init_done:
+            self._ensure_worker()
+            return
+        if time.monotonic() < self._init_retry_at:
             return
         if self._init_lock is None:
             self._init_lock = asyncio.Lock()
         async with self._init_lock:
-            if self._init_done:
+            if self._init_done or time.monotonic() < self._init_retry_at:
                 return
             try:
-                # Eagle's Postgres requires TLS but presents no client cert.
-                # asyncpg's built-in ssl="require" still pokes default cert
-                # paths under the deploy user's home and trips on permission
-                # errors, so we build a no-verify SSL context ourselves.
-                sslctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                sslctx.check_hostname = False
-                sslctx.verify_mode = ssl.CERT_NONE
-
-                self._pool = await asyncpg.create_pool(
-                    self._dsn,
-                    min_size=1,
-                    max_size=4,
-                    command_timeout=10,
-                    ssl=sslctx,
-                )
+                self._pool = await self._new_pool()
                 self._columns = await self._detect_columns()
                 self._sql = _insert_sql(self._columns)
                 self._queue = asyncio.Queue(maxsize=_QUEUE_MAX)
                 self._worker = asyncio.create_task(
                     self._drain(), name="activity-log-drain"
                 )
+                self._init_done = True
                 logger.info("activity_log: pool ready, worker started")
             except Exception as e:
-                logger.warning("activity_log: init failed (%s) — logging disabled", e)
+                # Retry later instead of disabling logging for the process lifetime.
+                logger.warning("activity_log: init failed (%s) — retrying in %ds", e,
+                               int(_INIT_RETRY_SECONDS))
                 self._pool = None
                 self._queue = None
-            finally:
-                # Mark done either way so we don't hammer a dead DB on every request.
-                self._init_done = True
+                self._init_retry_at = time.monotonic() + _INIT_RETRY_SECONDS
+
+    async def _new_pool(self) -> asyncpg.Pool:
+        # Eagle's Postgres requires TLS but presents no client cert.
+        # asyncpg's built-in ssl="require" still pokes default cert
+        # paths under the deploy user's home and trips on permission
+        # errors, so we build a no-verify SSL context ourselves.
+        sslctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        sslctx.check_hostname = False
+        sslctx.verify_mode = ssl.CERT_NONE
+        return await asyncio.wait_for(
+            asyncpg.create_pool(
+                self._dsn,
+                min_size=1,
+                max_size=4,
+                command_timeout=10,
+                timeout=_CONNECT_TIMEOUT,
+                ssl=sslctx,
+            ),
+            timeout=_CONNECT_TIMEOUT * 2,
+        )
+
+    def _ensure_worker(self) -> None:
+        """Restart the writer if it ever stopped (it must not, but never again silently)."""
+        if self._queue is None or self._pool is None:
+            return
+        if self._worker is None or self._worker.done():
+            if self._worker is not None:
+                exc = None if self._worker.cancelled() else self._worker.exception()
+                logger.warning("activity_log: writer stopped (%r) — restarting", exc)
+            self._worker_restarts += 1
+            self._worker = asyncio.create_task(self._drain(), name="activity-log-drain")
+
+    def stats(self) -> dict:
+        return {
+            "enabled": self._queue is not None,
+            "queued": self._queue.qsize() if self._queue is not None else 0,
+            "inserted": self._inserted,
+            "dropped": self._dropped,
+            "failures": self._failures,
+            "pool_rebuilds": self._rebuilds,
+            "writer_restarts": self._worker_restarts,
+            "seconds_since_last_insert": (
+                round(time.monotonic() - self._last_ok, 1) if self._last_ok is not None else None
+            ),
+        }
 
     async def _detect_columns(self) -> tuple[str, ...]:
         """Base columns, plus the partner ones if the table already has them.
@@ -147,20 +196,52 @@ class ActivityLogger:
                 pass
 
     async def _drain(self) -> None:
-        assert self._pool is not None and self._queue is not None
+        assert self._queue is not None
+        consecutive = 0
         while True:
             entry = await self._queue.get()
             try:
-                async with self._pool.acquire() as conn:
+                if self._pool is None:
+                    raise ConnectionError("no pool")
+                async with self._pool.acquire(timeout=_ACQUIRE_TIMEOUT) as conn:
                     await conn.execute(
                         self._sql,
                         *(entry.get(c) for c in self._columns),
                     )
+                consecutive = 0
+                self._inserted += 1
+                self._last_ok = time.monotonic()
             except asyncio.CancelledError:
-                raise
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise
+                # A CancelledError from inside asyncpg (not our task being
+                # cancelled) must not end the writer.
+                consecutive += 1
+                self._failures += 1
             except Exception as e:
-                # Never crash the worker — log and move on.
-                logger.warning("activity_log: insert failed: %s", e)
+                # Never crash the worker — log, back off, rebuild the pool if stuck.
+                consecutive += 1
+                self._failures += 1
+                logger.warning("activity_log: insert failed (%d in a row): %s", consecutive, e)
+            if consecutive:
+                if consecutive % _REBUILD_AFTER_FAILURES == 0:
+                    await self._rebuild_pool()
+                await asyncio.sleep(min(_MAX_BACKOFF, 2 ** min(consecutive, 5)))
+
+    async def _rebuild_pool(self) -> None:
+        old, self._pool = self._pool, None
+        if old is not None:
+            try:
+                old.terminate()
+            except Exception:
+                pass
+        try:
+            self._pool = await self._new_pool()
+            self._rebuilds += 1
+            logger.warning("activity_log: connection pool rebuilt")
+        except Exception as e:
+            logger.warning("activity_log: pool rebuild failed (%s); will retry", e)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
